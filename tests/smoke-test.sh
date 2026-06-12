@@ -14,10 +14,10 @@ run_check() {
     echo -n "[CHECK] $desc... "
     if docker run --rm "$IMAGE" python -c "$cmd" > /dev/null 2>&1; then
         echo "PASS"
-        ((PASS++))
+        PASS=$((PASS + 1))
     else
         echo "FAIL"
-        ((FAIL++))
+        FAIL=$((FAIL + 1))
     fi
 }
 
