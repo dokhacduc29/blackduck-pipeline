@@ -23,7 +23,9 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-    restart: on-failure:3
+    # Batch job: chạy xong rồi exit, không restart
+    # Nếu chuyển sang web server (FastAPI) sau này → đổi thành restart: on-failure:3
+    restart: "no"
 
 volumes:
   agent-data:

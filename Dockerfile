@@ -54,8 +54,6 @@ ENV PYTHONUNBUFFERED=1 \
 
 USER appuser
 
-# Healthcheck — verify main.py tồn tại + Python runtime OK
-HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
-    CMD python -c "import os; exit(0 if os.path.exists('/app/ai_trend_agent.WebApi/main.py') else 1)"
-
+# Batch job: chạy pipeline → scrape → save → exit
+# Không cần HEALTHCHECK (dành cho long-running services)
 CMD ["python", "ai_trend_agent.WebApi/main.py"]

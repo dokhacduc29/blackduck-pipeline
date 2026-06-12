@@ -70,10 +70,11 @@ jobs:
       - name: Pull image
         run: docker pull "${{ inputs.image_name }}:${{ inputs.image_tag }}"
 
-      # Deploy: inject secrets qua environment variables
-      # Secrets KHÔNG xuất hiện trong logs (GitHub auto-mask)
-      # --wait: đợi container healthcheck pass trước khi tiếp
-      # --timeout 60: fail nếu healthcheck không pass trong 60s
+      # Deploy: chạy container với secrets inject qua env vars
+      # AI Trend Agent là BATCH JOB (chạy → scrape → save → exit)
+      # Không phải web server → không dùng --wait/healthcheck
+      # docker compose up --abort-on-container-exit: chờ container chạy xong,
+      #   lấy exit code làm kết quả deploy
       - name: "Deploy to ${{ inputs.environment }}"
         env:
           IMAGE_NAME: ${{ inputs.image_name }}
@@ -86,30 +87,34 @@ jobs:
         run: |
           echo "=== Deploying to ${{ inputs.environment }} ==="
           echo "Image: $IMAGE_NAME:$IMAGE_TAG"
+
+          # --abort-on-container-exit: dừng khi container exit
+          # --exit-code-from agent: lấy exit code của service 'agent'
+          # Exit 0 = pipeline chạy thành công, non-zero = có lỗi
           docker compose -f ${{ inputs.compose_file }} up \
-            --detach --wait --timeout 60
-          echo "=== Deploy completed ==="
+            --abort-on-container-exit \
+            --exit-code-from agent \
+            --timeout 120
 
-      # Verify: kiểm tra container health sau deploy
+          echo "=== Deploy completed successfully ==="
+
+      # Verify: kiểm tra container đã exit clean
       - name: Verify deployment
+        if: success()
         run: |
-          STATUS=$(docker inspect \
-            --format='{{.State.Health.Status}}' \
-            ai-trend-agent 2>/dev/null || echo "not_found")
-          echo "Container health: $STATUS"
+          echo "::notice::Deployment to ${{ inputs.environment }} completed successfully"
+          # Show container logs cho audit trail
+          docker compose -f ${{ inputs.compose_file }} logs --tail=20 || true
 
-          if [ "$STATUS" != "healthy" ]; then
-            echo "::error::Container not healthy in ${{ inputs.environment }}"
-            docker compose -f ${{ inputs.compose_file }} logs --tail=50
-            exit 1
-          fi
-          echo "::notice::Deployment to ${{ inputs.environment }} verified"
+      # Cleanup: dọn container sau khi chạy xong (batch job)
+      - name: Cleanup
+        if: always()
+        run: |
+          docker compose -f ${{ inputs.compose_file }} down --timeout 30 || true
 
-      # Rollback: nếu bất kỳ step nào fail → dọn sạch
-      # if: failure() → chỉ chạy khi step trước fail
-      - name: Rollback on failure
+      # Rollback notification khi fail
+      - name: Report failure
         if: failure()
         run: |
-          echo "::warning::Rolling back ${{ inputs.environment }} deployment"
-          docker compose -f ${{ inputs.compose_file }} down --timeout 30
-          echo "::error::Deployment to ${{ inputs.environment }} failed and was rolled back"
+          echo "::error::Deployment to ${{ inputs.environment }} FAILED"
+          docker compose -f ${{ inputs.compose_file }} logs --tail=50 || true
