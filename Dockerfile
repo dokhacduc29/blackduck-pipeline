@@ -18,7 +18,7 @@ COPY Backend/requirements.txt .
 RUN pip install --no-cache-dir --prefix=/install \
     httpx==0.28.1 \
     python-dotenv==1.2.2 \
-    google-generativeai \
+    google-genai \
     supabase==2.11.0 \
     python-telegram-bot==21.9
 
