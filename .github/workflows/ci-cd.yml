@@ -136,17 +136,28 @@ jobs:
   # ===========================================================================
   # STAGE 2: TEST
   # ===========================================================================
-  # Smoke test: verify image chứa đủ tools (Java, scan binaries, Python)
+  # Unit test (pytest) + Smoke test (container runtime check)
   test:
     runs-on: ubuntu-latest
     needs: build
-    # needs: build → chờ build xong + push GHCR mới chạy
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        # Cần checkout để lấy tests/smoke-test.sh
 
+      # ---- Unit Tests (pytest) ----
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Run unit tests
+        run: |
+          pip install -r requirements.txt pytest
+          pytest test_app.py -v
+          # -v: verbose, thấy từng test pass/fail
+
+      # ---- Smoke Tests (container) ----
       - name: Login to GHCR
         uses: docker/login-action@v3
         with:
@@ -157,14 +168,12 @@ jobs:
       - name: Pull built image
         run: |
           docker pull ${{ env.IMAGE_NAME }}:${{ needs.build.outputs.image_tag }}
-          # Pull image vừa build từ GHCR — đảm bảo test đúng image sẽ deploy
 
       - name: Run smoke tests
         run: |
           chmod +x tests/smoke-test.sh
           ./tests/smoke-test.sh "${{ env.IMAGE_NAME }}:${{ needs.build.outputs.image_tag }}"
-          # Smoke test verify: Java 17, scan binaries, Python, entrypoint
-          # Nếu BẤT KỲ check nào fail → exit 1 → job fail → deploy bị block
+          # Smoke test: start container, hit /health, verify non-root
 
   # ===========================================================================
   # STAGE 3: SCAN (Trivy)

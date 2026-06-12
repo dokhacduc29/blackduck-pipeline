@@ -1,9 +1,5 @@
 #!/bin/bash
-# smoke-test.sh — Verify image chứa đủ tools cần thiết
-# TẠI SAO smoke test: nếu Java bị thiếu hoặc binary corrupt,
-# phát hiện ở stage TEST thay vì khi deploy production.
-# "Smoke test" = bật máy lên xem có bốc khói không, không test deep logic.
-
+# smoke-test.sh — Verify image hoạt động đúng trước khi deploy
 set -euo pipefail
 
 IMAGE="${1:?Usage: smoke-test.sh <image:tag>}"
@@ -12,13 +8,11 @@ echo "=== Smoke Test: $IMAGE ==="
 PASS=0
 FAIL=0
 
-# Hàm helper — chạy command trong container, check exit code
 run_check() {
     local description="$1"
     local command="$2"
-
     echo -n "[CHECK] $description... "
-    if docker run --rm --entrypoint="" "$IMAGE" sh -c "$command" > /dev/null 2>&1; then
+    if eval "$command" > /dev/null 2>&1; then
         echo "PASS"
         ((PASS++))
     else
@@ -27,25 +21,22 @@ run_check() {
     fi
 }
 
+# Chạy container background
+CID=$(docker run -d --rm -p 5555:5000 "$IMAGE")
+sleep 3  # Đợi gunicorn start
+
 # ---- Checks ----
-# Mỗi check verify 1 component critical
-run_check "Java 17 installed" "java -version 2>&1 | grep -q '17'"
-run_check "blackduck-scan binary exists" "which blackduck-scan"
-run_check "blackduck-report binary exists" "which blackduck-report"
-run_check "Python 3 available" "python3 --version"
-run_check "curl available (for health checks)" "curl --version"
-run_check "entrypoint.sh executable" "test -x /usr/local/bin/entrypoint.sh"
-run_check "Non-root user can run" "id | grep -v 'uid=0'"
-# Check cuối: verify entrypoint ít nhất print usage khi thiếu env vars
-run_check "Entrypoint fails fast without env" \
-    "! /usr/local/bin/entrypoint.sh 2>&1 | grep -q 'Missing required'"
+run_check "Container is running" "docker inspect $CID --format='{{.State.Running}}' | grep true"
+run_check "Health endpoint returns 200" "curl -sf http://localhost:5555/health"
+run_check "Health response has status=ok" "curl -sf http://localhost:5555/health | grep -q ok"
+run_check "Root endpoint returns 200" "curl -sf http://localhost:5555/"
+run_check "Non-root user" "docker exec $CID id | grep -v 'uid=0'"
+run_check "Python available" "docker exec $CID python3 --version"
+
+# Cleanup
+docker stop "$CID" > /dev/null 2>&1 || true
 
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
-
-# Exit 1 nếu có bất kỳ check nào fail → pipeline stage TEST sẽ fail
-if [ "$FAIL" -gt 0 ]; then
-    echo "[FAIL] Smoke test failed — do NOT proceed to deploy"
-    exit 1
-fi
+[ "$FAIL" -gt 0 ] && echo "[FAIL] Smoke test failed" && exit 1
 echo "[PASS] All checks passed"
