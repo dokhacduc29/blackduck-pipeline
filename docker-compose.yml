@@ -1,0 +1,64 @@
+# docker-compose.yml — Production deploy configuration
+# TẠI SAO Docker Compose thay vì docker run:
+# 1. Declarative: đọc file biết ngay config, không phải đọc lại command dài
+# 2. Reproducible: ai chạy cũng cùng config
+# 3. Environment management: .env file tách secrets khỏi code
+# Trade-off vs K8s: Compose đơn giản hơn nhưng chỉ single-host,
+# không có auto-scaling, self-healing. Day 20+ sẽ chuyển K8s.
+
+services:
+  scanner:
+    # Image tag dùng biến — CI/CD truyền vào, default = latest
+    image: ${IMAGE_NAME:-ghcr.io/dokhacduc29/blackduck-unified}:${IMAGE_TAG:-latest}
+    container_name: blackduck-scanner
+
+    # ---- Environment Variables ----
+    # Secrets KHÔNG hardcode trong file này — truyền từ CI/CD secrets
+    # hoặc file .env (đã gitignore)
+    environment:
+      - BLACKDUCK_URL=${BLACKDUCK_URL}
+      - BLACKDUCK_TOKEN=${BLACKDUCK_TOKEN}
+      - PROJECT_NAME=${PROJECT_NAME:-devsecops-demo}
+      - PROJECT_VERSION=${PROJECT_VERSION:-latest}
+      - DEFECTDOJO_URL=${DEFECTDOJO_URL:-}
+      - DEFECTDOJO_TOKEN=${DEFECTDOJO_TOKEN:-}
+
+    # ---- Resource Limits ----
+    # TẠI SAO set limits: không để 1 container ăn hết RAM/CPU của host
+    # Synopsys Detect cần ~2GB RAM cho scan project lớn
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: "1.0"
+        reservations:
+          memory: 512M
+          cpus: "0.5"
+
+    # ---- Volumes ----
+    # Mount source code vào container để scan
+    volumes:
+      - ${SCAN_TARGET:-.}:/src:ro
+      # :ro = read-only — container không được modify source code
+      # Principle of Least Privilege: scanner chỉ cần ĐỌC
+      - scan-results:/tmp
+      # Named volume cho results — persist sau khi container stop
+
+    # ---- Logging ----
+    # json-file driver với max-size: tránh log file phình vô hạn
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+        # Giữ tối đa 3 file x 10MB = 30MB log
+
+    # ---- Restart Policy ----
+    # on-failure: chỉ restart khi exit code != 0, tối đa 3 lần
+    # TẠI SAO không "always": scanner là one-shot job, không phải long-running service
+    restart: on-failure:3
+
+# Named volume — data persist qua container restarts
+volumes:
+  scan-results:
+    driver: local

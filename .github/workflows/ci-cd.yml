@@ -1,0 +1,345 @@
+# =============================================================================
+# CI/CD Pipeline — BlackDuck Unified Scanner
+# 4 Stages: BUILD → TEST → SCAN → DEPLOY
+# =============================================================================
+# Day 10 (P1 W2): Pipeline cơ bản 4 stage
+# Day 16 (P1 W3): Production-grade — quality gate, caching, reports, rollback
+# =============================================================================
+
+name: "BlackDuck Unified CI/CD"
+
+# ---- TRIGGER ----
+# TẠI SAO push + pull_request:
+# - push to main: full pipeline bao gồm deploy
+# - PR to main: chỉ build + test + scan, KHÔNG deploy
+#   → reviewer thấy scan results trước khi merge
+# TẠI SAO thêm workflow_dispatch:
+# - Cho phép trigger manual từ GitHub UI (Actions tab → Run workflow)
+# - Hữu ích khi cần re-run mà không tạo commit mới
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "docs/**"        # Thay đổi docs không cần build lại
+      - "**.md"           # README changes không trigger pipeline
+      - ".gitignore"
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      skip_deploy:
+        description: "Skip deploy stage (for testing pipeline only)"
+        type: boolean
+        default: false
+
+# ---- PERMISSIONS ----
+# Principle of Least Privilege: chỉ cấp quyền pipeline thật sự cần
+# TẠI SAO không dùng default (read-all): nếu pipeline bị compromise,
+# attacker chỉ có đúng quyền được list ở đây, không hơn
+permissions:
+  contents: read          # Checkout code
+  packages: write         # Push/pull image từ GHCR
+  security-events: write  # Upload Trivy results lên Security tab
+
+# ---- ENVIRONMENT VARIABLES ----
+# Biến dùng chung cho tất cả jobs — DRY (Don't Repeat Yourself)
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/blackduck-unified
+  # github.repository_owner = "dokhacduc29" — không hardcode
+  # để fork cũng chạy được
+
+# ---- CONCURRENCY ----
+# TẠI SAO: nếu push 2 commit liên tiếp, cancel pipeline cũ
+# Tiết kiệm runner minutes, tránh deploy version cũ sau version mới
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# =============================================================================
+# JOBS
+# =============================================================================
+jobs:
+
+  # ===========================================================================
+  # STAGE 1: BUILD
+  # ===========================================================================
+  # Build Docker image từ Dockerfile, tag bằng commit SHA, push lên GHCR
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      # Output image tag để các job sau dùng — tránh mỗi job tự tính
+      image_tag: ${{ steps.meta.outputs.version }}
+      image_digest: ${{ steps.build-push.outputs.digest }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # ---- Docker layer caching ----
+      # TẠI SAO: apt-get install + pip install không đổi giữa các build
+      # Cache layer → build lần 2 chỉ mất ~30s thay vì 3-5 phút
+      # Trade-off: tốn storage (~500MB cache) nhưng tiết kiệm 80% build time
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        # Buildx = builder nâng cao, hỗ trợ cache export/import
+        # Docker build thường KHÔNG cache giữa các CI runs
+        # Buildx + cache-to/cache-from giải quyết vấn đề này
+
+      # ---- Login vào GHCR ----
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          # GITHUB_TOKEN: tự động generated mỗi workflow run
+          # TẠI SAO không dùng PAT: GITHUB_TOKEN scoped đúng repo,
+          # tự expire sau workflow, không cần manage secrets
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # ---- Generate image tags + labels ----
+      - name: Extract metadata (tags, labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            # Tag strategy:
+            # 1. SHA ngắn (7 chars) — mỗi commit unique, dễ reference
+            type=sha,prefix=,format=short
+            # 2. "latest" chỉ khi push main — PR không tag latest
+            type=raw,value=latest,enable={{is_default_branch}}
+            # 3. Branch name — hữu ích cho feature branches
+            type=ref,event=branch
+          # TẠI SAO nhiều tag: SHA để traceback chính xác commit nào build image,
+          # latest để docker-compose pull mặc định, branch cho debug
+
+      # ---- Build + Push ----
+      - name: Build and push Docker image
+        id: build-push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          # Push luôn lên GHCR — các job sau pull từ GHCR thay vì dùng artifact
+          # TẠI SAO push thay vì docker save/load qua artifact:
+          # - Artifact upload/download 700MB image = chậm + tốn storage
+          # - GHCR có layer deduplication — lần push thứ 2 chỉ push layer thay đổi
+          # - Trade-off: cần GHCR login ở mỗi job, nhưng đã có GITHUB_TOKEN
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          # type=gha: GitHub Actions cache backend
+          # mode=max: cache TẤT CẢ layers, không chỉ final
+
+  # ===========================================================================
+  # STAGE 2: TEST
+  # ===========================================================================
+  # Smoke test: verify image chứa đủ tools (Java, scan binaries, Python)
+  test:
+    runs-on: ubuntu-latest
+    needs: build
+    # needs: build → chờ build xong + push GHCR mới chạy
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        # Cần checkout để lấy tests/smoke-test.sh
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull built image
+        run: |
+          docker pull ${{ env.IMAGE_NAME }}:${{ needs.build.outputs.image_tag }}
+          # Pull image vừa build từ GHCR — đảm bảo test đúng image sẽ deploy
+
+      - name: Run smoke tests
+        run: |
+          chmod +x tests/smoke-test.sh
+          ./tests/smoke-test.sh "${{ env.IMAGE_NAME }}:${{ needs.build.outputs.image_tag }}"
+          # Smoke test verify: Java 17, scan binaries, Python, entrypoint
+          # Nếu BẤT KỲ check nào fail → exit 1 → job fail → deploy bị block
+
+  # ===========================================================================
+  # STAGE 3: SCAN (Trivy)
+  # ===========================================================================
+  # Vulnerability scan image bằng Trivy — quality gate chặn Critical CVE
+  scan:
+    runs-on: ubuntu-latest
+    needs: build
+    # TẠI SAO needs: build (không phải needs: test):
+    # scan và test CHẠY SONG SONG — cả 2 chỉ cần image từ build
+    # Pipeline time = max(test, scan) thay vì test + scan
+    # Trade-off: tốn thêm 1 runner đồng thời, nhưng feedback nhanh hơn
+
+    steps:
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # ---- Trivy Scan: Quality Gate ----
+      - name: "Trivy scan — Critical CVE gate"
+        uses: aquasecurity/trivy-action@0.31.0
+        with:
+          image-ref: "${{ env.IMAGE_NAME }}:${{ needs.build.outputs.image_tag }}"
+          format: "table"
+          severity: "CRITICAL"
+          exit-code: "1"
+          # EXIT CODE 1 khi tìm thấy CRITICAL → job fail → deploy blocked
+          # TẠI SAO chỉ block CRITICAL, không block HIGH:
+          # - CRITICAL = exploitable ngay, có public exploit, CVSS >= 9.0
+          # - HIGH = nghiêm trọng nhưng thường cần điều kiện đặc biệt để exploit
+          # - Block cả HIGH → pipeline gần như luôn fail (hầu hết base image có HIGH)
+          # - Trade-off: strict (block HIGH) vs practical (chỉ block CRITICAL)
+          # - Quyết định: block CRITICAL, report HIGH, track trong DefectDojo
+          timeout: "15m"
+          # TẠI SAO 15m: Day 9 em gặp timeout với default 5m trên image 626MB
+
+      # ---- Trivy Scan: Full Report (luôn chạy) ----
+      - name: "Trivy scan — Full report (SARIF)"
+        if: always()
+        # TẠI SAO if: always(): khi step trên fail (có Critical CVE),
+        # vẫn cần report đầy đủ để biết cụ thể lỗi gì, plan fix
+        uses: aquasecurity/trivy-action@0.31.0
+        with:
+          image-ref: "${{ env.IMAGE_NAME }}:${{ needs.build.outputs.image_tag }}"
+          format: "sarif"
+          output: "trivy-results.sarif"
+          severity: "CRITICAL,HIGH,MEDIUM"
+          timeout: "15m"
+          # SARIF format: GitHub Security tab hiểu native
+          # TẠI SAO SARIF thay vì JSON: SARIF upload được lên GitHub Code Scanning
+          # → thấy CVE ngay trong Security tab, không cần mở artifact
+
+      # ---- Upload lên GitHub Security tab ----
+      - name: Upload Trivy SARIF to GitHub Security
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-results.sarif
+          # Sau khi upload: GitHub → Security → Code scanning alerts
+          # → thấy từng CVE với severity, affected package, fix version
+
+      # ---- JSON report cho archive ----
+      - name: "Trivy scan — JSON report"
+        if: always()
+        uses: aquasecurity/trivy-action@0.31.0
+        with:
+          image-ref: "${{ env.IMAGE_NAME }}:${{ needs.build.outputs.image_tag }}"
+          format: "json"
+          output: "trivy-report.json"
+          severity: "CRITICAL,HIGH,MEDIUM"
+          timeout: "15m"
+
+      - name: Upload scan reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-reports
+          path: |
+            trivy-results.sarif
+            trivy-report.json
+          retention-days: 30
+          # Giữ report 30 ngày — đủ cho audit trail
+          # Trade-off: 90 ngày compliance tốt hơn nhưng tốn storage
+
+  # ===========================================================================
+  # STAGE 4: DEPLOY
+  # ===========================================================================
+  # Deploy bằng Docker Compose — chỉ khi push main + test/scan pass
+  deploy:
+    runs-on: ubuntu-latest
+    needs: [test, scan]
+    # needs: [test, scan] → chờ CẢ HAI pass mới deploy
+    # Nếu test pass nhưng scan fail → KHÔNG deploy
+
+    # ---- Deploy conditions ----
+    if: |
+      github.ref == 'refs/heads/main' &&
+      github.event_name != 'pull_request' &&
+      (github.event.inputs.skip_deploy != 'true')
+    # Condition 1: chỉ deploy từ main branch
+    # Condition 2: PR thì dừng ở scan — reviewer cần approve trước
+    # Condition 3: manual trigger có thể skip deploy (for testing)
+
+    # ---- Environment ----
+    # GitHub Environment: cấu hình protection rules, secrets riêng
+    # Settings → Environments → "production" → Required reviewers
+    environment:
+      name: production
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # ---- Deploy with Docker Compose ----
+      - name: Deploy with Docker Compose
+        env:
+          IMAGE_TAG: ${{ needs.build.outputs.image_tag }}
+          # Secrets từ GitHub Environment — KHÔNG hardcode
+          BLACKDUCK_URL: ${{ secrets.BLACKDUCK_URL }}
+          BLACKDUCK_TOKEN: ${{ secrets.BLACKDUCK_TOKEN }}
+          PROJECT_NAME: ${{ github.repository }}
+          PROJECT_VERSION: ${{ needs.build.outputs.image_tag }}
+        run: |
+          echo "=== Deploying BlackDuck Unified Scanner ==="
+          echo "Image: $IMAGE_NAME:$IMAGE_TAG"
+
+          # Pull image trước — fail early nếu image không tồn tại
+          docker pull "$IMAGE_NAME:$IMAGE_TAG"
+
+          # Docker Compose up
+          # --detach: chạy background
+          # --wait: đợi health check pass (từ HEALTHCHECK trong Dockerfile)
+          # --timeout 120: đợi tối đa 120s cho health check
+          docker compose up --detach --wait --timeout 120
+
+          echo "=== Deploy completed ==="
+
+      # ---- Verify deployment ----
+      - name: Verify deployment health
+        run: |
+          echo "=== Health Check ==="
+          # Kiểm tra container running + healthy
+          STATUS=$(docker inspect --format='{{.State.Health.Status}}' blackduck-scanner 2>/dev/null || echo "not_found")
+          echo "Container health: $STATUS"
+
+          if [ "$STATUS" != "healthy" ]; then
+            echo "[FAIL] Container not healthy — triggering rollback"
+            # Show logs để debug
+            docker compose logs --tail=50
+            exit 1
+          fi
+
+          echo "[PASS] Deployment verified — container is healthy"
+
+      # ---- Rollback on failure ----
+      - name: Rollback on failure
+        if: failure()
+        # if: failure() → chỉ chạy khi step trước fail
+        # TẠI SAO rollback trong pipeline: auto-recovery, không cần SSH vào server fix tay
+        run: |
+          echo "=== ROLLBACK ==="
+          echo "[WARN] Deploy failed — stopping containers"
+          docker compose down --timeout 30
+          # Trong production thật: pull + deploy previous tag
+          # Ở đây: stop container, alert team
+          echo "[INFO] Rollback completed. Previous version should be restored."
+          echo "::warning::Deployment failed and was rolled back. Check logs above."
+          # ::warning:: = GitHub Actions annotation, hiện warning icon trong UI
