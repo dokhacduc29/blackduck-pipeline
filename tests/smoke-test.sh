@@ -12,7 +12,7 @@ run_check() {
     local desc="$1"
     local cmd="$2"
     echo -n "[CHECK] $desc... "
-    if docker run --rm --entrypoint="" "$IMAGE" sh -c "$cmd" > /dev/null 2>&1; then
+    if docker run --rm "$IMAGE" python -c "$cmd" > /dev/null 2>&1; then
         echo "PASS"
         ((PASS++))
     else
@@ -22,13 +22,15 @@ run_check() {
 }
 
 # ---- Checks ----
-run_check "Python 3.13 available" "python --version 2>&1 | grep '3.13'"
-run_check "main.py exists" "test -f /app/ai_trend_agent.WebApi/main.py"
-run_check "httpx installed" "python -c 'import httpx'"
-run_check "dotenv installed" "python -c 'import dotenv'"
-run_check "Non-root user" "id | grep -v 'uid=0'"
-run_check "Data dir writable" "touch /app/data/test && rm /app/data/test"
-run_check "PYTHONPATH set" "python -c 'from models import Article'"
+# Dùng python -c thay vì sh -c — python:3.13-slim có thể thiếu shell utils
+run_check "Python 3.13 available" "import sys; assert sys.version_info[:2] == (3, 13)"
+run_check "main.py exists" "import os; assert os.path.exists('/app/ai_trend_agent.WebApi/main.py')"
+run_check "httpx installed" "import httpx"
+run_check "dotenv installed" "import dotenv"
+run_check "supabase installed" "import supabase"
+run_check "models importable" "from models import Article"
+run_check "Non-root user" "import os; assert os.getuid() != 0"
+run_check "Data dir writable" "open('/app/data/_test','w').close(); import os; os.remove('/app/data/_test')"
 
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="

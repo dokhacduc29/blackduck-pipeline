@@ -140,7 +140,7 @@ jobs:
 
       # Quality Gate — block CRITICAL CVE
       - name: "Trivy: Critical CVE gate"
-        uses: aquasecurity/trivy-action@0.31.0
+        uses: aquasecurity/trivy-action@0.36.0
         with:
           image-ref: "${{ env.IMAGE_NAME }}:${{ needs.build.outputs.image_tag }}"
           format: "table"
@@ -151,7 +151,7 @@ jobs:
       # Full report (SARIF) — luôn chạy kể cả khi gate fail
       - name: "Trivy: SARIF report"
         if: always()
-        uses: aquasecurity/trivy-action@0.31.0
+        uses: aquasecurity/trivy-action@0.36.0
         with:
           image-ref: "${{ env.IMAGE_NAME }}:${{ needs.build.outputs.image_tag }}"
           format: "sarif"
@@ -169,7 +169,7 @@ jobs:
       # JSON report cho archive
       - name: "Trivy: JSON report"
         if: always()
-        uses: aquasecurity/trivy-action@0.31.0
+        uses: aquasecurity/trivy-action@0.36.0
         with:
           image-ref: "${{ env.IMAGE_NAME }}:${{ needs.build.outputs.image_tag }}"
           format: "json"
