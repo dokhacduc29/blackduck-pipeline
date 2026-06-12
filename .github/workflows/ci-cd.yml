@@ -1,7 +1,19 @@
 # =============================================================================
-# CI/CD Pipeline — AI Trend Agent
-# 4 Stages: BUILD → TEST → SCAN (Trivy) → DEPLOY
-# Day 10 + Day 16: Production-grade pipeline
+# CI/CD Pipeline — AI Trend Agent (Production-Grade)
+# Day 11-16: Reusable Workflows + Multi-Environment + Approval Gate
+#
+# Flow:
+#   BUILD → TEST ──┐
+#                   ├→ DEPLOY-DEV (auto)
+#          SCAN ──┘       ↓
+#                   DEPLOY-STAGING (auto, main only)
+#                         ↓
+#                   DEPLOY-PROD (manual approval, main only)
+#
+# Reusable workflows (_build, _test, _scan, _deploy):
+#   - Tách logic ra file riêng → tái sử dụng cho project khác
+#   - Mỗi file tự khai báo permissions (least privilege)
+#   - Main file chỉ orchestrate flow + truyền params
 # =============================================================================
 
 name: "AI Trend Agent CI/CD"
@@ -18,22 +30,31 @@ on:
   workflow_dispatch:
     inputs:
       skip_deploy:
-        description: "Skip deploy stage"
+        description: "Skip all deploy stages"
         type: boolean
         default: false
+      environment:
+        description: "Deploy to specific environment only"
+        type: choice
+        options:
+          - "all"
+          - "dev"
+          - "staging"
+          - "production"
+        default: "all"
 
-# Principle of Least Privilege — chỉ cấp quyền pipeline thật sự cần
+# Permissions: least-privilege
+# Mỗi reusable workflow tự khai báo thêm nếu cần
 permissions:
   contents: read
   packages: write
   security-events: write
 
 env:
-  REGISTRY: ghcr.io
   IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/ai-trend-agent
-  # Không hardcode username → fork cũng chạy được
 
-# Cancel pipeline cũ khi có push mới — tránh race condition deploy
+# Cancel pipeline cũ khi có push mới trên cùng branch
+# Tránh race condition: 2 deploy cùng lúc → state không nhất quán
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -44,202 +65,107 @@ jobs:
   # STAGE 1: BUILD
   # ===========================================================================
   build:
-    runs-on: ubuntu-latest
-    outputs:
-      image_tag: ${{ steps.meta.outputs.version }}
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Login to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Extract metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.IMAGE_NAME }}
-          tags: |
-            type=sha,prefix=,format=short
-            type=raw,value=latest,enable={{is_default_branch}}
-
-      - name: Build and push
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+    uses: ./.github/workflows/_build.yml
+    with:
+      image_name: ghcr.io/${{ github.repository_owner }}/ai-trend-agent
+    # permissions: reusable workflow inherits từ top-level caller
+    # Không thể set per-job permissions khi dùng `uses:`
 
   # ===========================================================================
-  # STAGE 2: TEST
+  # STAGE 2: TEST (chạy song song với SCAN)
+  # needs: build → đợi image sẵn sàng
   # ===========================================================================
   test:
-    runs-on: ubuntu-latest
     needs: build
-
-    steps:
-      - uses: actions/checkout@v4
-
-      # ---- Unit Tests (pytest) ----
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
-
-      - name: Install test dependencies
-        run: |
-          pip install -r Backend/requirements.txt
-          pip install pytest pytest-asyncio
-
-      - name: Run unit tests
-        run: |
-          cd Backend
-          python -m pytest ai_trend_agent.Tests/test_agents.py -v
-          # -v: verbose — thấy từng test pass/fail
-
-      # ---- Smoke Test (container) ----
-      - name: Login to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Pull built image
-        run: docker pull ${{ env.IMAGE_NAME }}:${{ needs.build.outputs.image_tag }}
-
-      - name: Run smoke tests
-        run: |
-          chmod +x tests/smoke-test.sh
-          ./tests/smoke-test.sh "${{ env.IMAGE_NAME }}:${{ needs.build.outputs.image_tag }}"
+    uses: ./.github/workflows/_test.yml
+    with:
+      image_name: ghcr.io/${{ github.repository_owner }}/ai-trend-agent
+      image_tag: ${{ needs.build.outputs.image_tag }}
 
   # ===========================================================================
-  # STAGE 3: SCAN (Trivy)
+  # STAGE 3: SCAN — chạy SONG SONG với TEST
+  # Cả 2 chỉ cần image từ build → không cần đợi nhau
+  # Trade-off: song song = nhanh hơn ~1 phút, nhưng tốn 2 runner slot
   # ===========================================================================
   scan:
-    runs-on: ubuntu-latest
     needs: build
-    # Chạy SONG SONG với test — cả 2 chỉ cần image từ build
-
-    steps:
-      - name: Login to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      # Quality Gate — block CRITICAL CVE
-      - name: "Trivy: Critical CVE gate"
-        uses: aquasecurity/trivy-action@0.35.0
-        with:
-          image-ref: "${{ env.IMAGE_NAME }}:${{ needs.build.outputs.image_tag }}"
-          format: "table"
-          severity: "CRITICAL"
-          exit-code: "1"
-          timeout: "15m"
-
-      # Full report (SARIF) — luôn chạy kể cả khi gate fail
-      - name: "Trivy: SARIF report"
-        if: always()
-        uses: aquasecurity/trivy-action@0.35.0
-        with:
-          image-ref: "${{ env.IMAGE_NAME }}:${{ needs.build.outputs.image_tag }}"
-          format: "sarif"
-          output: "trivy-results.sarif"
-          severity: "CRITICAL,HIGH,MEDIUM"
-          timeout: "15m"
-
-      # Upload lên GitHub Security tab
-      - name: Upload SARIF to GitHub Security
-        if: always()
-        uses: github/codeql-action/upload-sarif@v3
-        with:
-          sarif_file: trivy-results.sarif
-
-      # JSON report cho archive
-      - name: "Trivy: JSON report"
-        if: always()
-        uses: aquasecurity/trivy-action@0.35.0
-        with:
-          image-ref: "${{ env.IMAGE_NAME }}:${{ needs.build.outputs.image_tag }}"
-          format: "json"
-          output: "trivy-report.json"
-          severity: "CRITICAL,HIGH,MEDIUM"
-          timeout: "15m"
-
-      - name: Upload scan reports
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: trivy-reports
-          path: |
-            trivy-results.sarif
-            trivy-report.json
-          retention-days: 30
+    uses: ./.github/workflows/_scan.yml
+    with:
+      image_name: ghcr.io/${{ github.repository_owner }}/ai-trend-agent
+      image_tag: ${{ needs.build.outputs.image_tag }}
+      severity_gate: "CRITICAL"
+      ignore_unfixed: true
 
   # ===========================================================================
-  # STAGE 4: DEPLOY
+  # STAGE 4a: DEPLOY → DEV
+  # Auto deploy — không cần approval
+  # Chạy trên mọi push (kể cả PR) để verify deploy logic
   # ===========================================================================
-  deploy:
-    runs-on: ubuntu-latest
-    needs: [test, scan]
+  deploy-dev:
+    needs: [build, test, scan]
+    if: |
+      github.event.inputs.skip_deploy != 'true' &&
+      (github.event.inputs.environment == 'all' || github.event.inputs.environment == 'dev' || github.event.inputs.environment == '')
+    uses: ./.github/workflows/_deploy.yml
+    with:
+      image_name: ghcr.io/${{ github.repository_owner }}/ai-trend-agent
+      image_tag: ${{ needs.build.outputs.image_tag }}
+      environment: dev
+    secrets:
+      NEWS_API_KEY: ${{ secrets.NEWS_API_KEY }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+
+  # ===========================================================================
+  # STAGE 4b: DEPLOY → STAGING
+  # Auto deploy — chỉ trên main branch, sau dev pass
+  # Staging = bản sao production, dùng để final verification
+  # ===========================================================================
+  deploy-staging:
+    needs: [build, deploy-dev]
     if: |
       github.ref == 'refs/heads/main' &&
       github.event_name != 'pull_request' &&
-      (github.event.inputs.skip_deploy != 'true')
+      github.event.inputs.skip_deploy != 'true' &&
+      (github.event.inputs.environment == 'all' || github.event.inputs.environment == 'staging' || github.event.inputs.environment == '')
+    uses: ./.github/workflows/_deploy.yml
+    with:
+      image_name: ghcr.io/${{ github.repository_owner }}/ai-trend-agent
+      image_tag: ${{ needs.build.outputs.image_tag }}
+      environment: staging
+    secrets:
+      NEWS_API_KEY: ${{ secrets.NEWS_API_KEY }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
 
-    environment:
-      name: production
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Login to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Deploy with Docker Compose
-        env:
-          IMAGE_NAME: ${{ env.IMAGE_NAME }}
-          IMAGE_TAG: ${{ needs.build.outputs.image_tag }}
-        run: |
-          echo "=== Deploying AI Trend Agent ==="
-          echo "Image: $IMAGE_NAME:$IMAGE_TAG"
-          docker pull "$IMAGE_NAME:$IMAGE_TAG"
-
-          # Docker Compose up — --wait đợi HEALTHCHECK pass
-          docker compose up --detach --wait --timeout 60
-
-          echo "=== Deploy completed ==="
-
-      - name: Verify deployment
-        run: |
-          STATUS=$(docker inspect --format='{{.State.Health.Status}}' ai-trend-agent 2>/dev/null || echo "not_found")
-          echo "Container health: $STATUS"
-
-          if [ "$STATUS" != "healthy" ]; then
-            echo "[FAIL] Container not healthy"
-            docker compose logs --tail=30
-            exit 1
-          fi
-          echo "[PASS] Deployment verified"
-
-      - name: Rollback on failure
-        if: failure()
-        run: |
-          echo "=== ROLLBACK ==="
-          docker compose down --timeout 30
-          echo "::warning::Deployment failed and was rolled back"
+  # ===========================================================================
+  # STAGE 4c: DEPLOY → PRODUCTION
+  # MANUAL APPROVAL REQUIRED
+  # Cần set trong GitHub → Settings → Environments → production:
+  #   - Required reviewers: thêm reviewer (VD: mentor anh Bình)
+  #   - Wait timer: optional (VD: 5 phút delay trước deploy)
+  #   - Deployment branch: restrict to main only
+  # Pipeline sẽ PAUSE ở đây chờ approval trong GitHub UI
+  # ===========================================================================
+  deploy-prod:
+    needs: [build, deploy-staging]
+    if: |
+      github.ref == 'refs/heads/main' &&
+      github.event_name != 'pull_request' &&
+      github.event.inputs.skip_deploy != 'true' &&
+      (github.event.inputs.environment == 'all' || github.event.inputs.environment == 'production' || github.event.inputs.environment == '')
+    uses: ./.github/workflows/_deploy.yml
+    with:
+      image_name: ghcr.io/${{ github.repository_owner }}/ai-trend-agent
+      image_tag: ${{ needs.build.outputs.image_tag }}
+      environment: production
+    secrets:
+      NEWS_API_KEY: ${{ secrets.NEWS_API_KEY }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}

@@ -1,0 +1,115 @@
+# =============================================================================
+# Reusable Workflow: DEPLOY
+# Deploy to any environment via Docker Compose
+# Supports: dev / staging / prod — caller chọn environment
+# =============================================================================
+
+name: "_deploy"
+
+on:
+  workflow_call:
+    inputs:
+      image_name:
+        description: "Full image name"
+        required: true
+        type: string
+      image_tag:
+        description: "Image tag to deploy"
+        required: true
+        type: string
+      environment:
+        description: "Target environment (dev / staging / production)"
+        required: true
+        type: string
+      compose_file:
+        description: "Path to docker-compose file"
+        required: false
+        type: string
+        default: "docker-compose.yml"
+
+    # Secrets phải explicitly pass qua workflow_call
+    # Không tự inherit — đây là security feature của GitHub Actions
+    secrets:
+      NEWS_API_KEY:
+        required: false
+      GEMINI_API_KEY:
+        required: false
+      SUPABASE_URL:
+        required: false
+      SUPABASE_KEY:
+        required: false
+      TELEGRAM_BOT_TOKEN:
+        required: false
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    # environment: link tới GitHub Environment settings
+    # Cho phép:
+    #   1. Protection rules (required reviewers, wait timer)
+    #   2. Environment-specific secrets
+    #   3. Deployment history tracking trong GitHub UI
+    environment:
+      name: ${{ inputs.environment }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull image
+        run: docker pull "${{ inputs.image_name }}:${{ inputs.image_tag }}"
+
+      # Deploy: inject secrets qua environment variables
+      # Secrets KHÔNG xuất hiện trong logs (GitHub auto-mask)
+      # --wait: đợi container healthcheck pass trước khi tiếp
+      # --timeout 60: fail nếu healthcheck không pass trong 60s
+      - name: "Deploy to ${{ inputs.environment }}"
+        env:
+          IMAGE_NAME: ${{ inputs.image_name }}
+          IMAGE_TAG: ${{ inputs.image_tag }}
+          NEWS_API_KEY: ${{ secrets.NEWS_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        run: |
+          echo "=== Deploying to ${{ inputs.environment }} ==="
+          echo "Image: $IMAGE_NAME:$IMAGE_TAG"
+          docker compose -f ${{ inputs.compose_file }} up \
+            --detach --wait --timeout 60
+          echo "=== Deploy completed ==="
+
+      # Verify: kiểm tra container health sau deploy
+      - name: Verify deployment
+        run: |
+          STATUS=$(docker inspect \
+            --format='{{.State.Health.Status}}' \
+            ai-trend-agent 2>/dev/null || echo "not_found")
+          echo "Container health: $STATUS"
+
+          if [ "$STATUS" != "healthy" ]; then
+            echo "::error::Container not healthy in ${{ inputs.environment }}"
+            docker compose -f ${{ inputs.compose_file }} logs --tail=50
+            exit 1
+          fi
+          echo "::notice::Deployment to ${{ inputs.environment }} verified"
+
+      # Rollback: nếu bất kỳ step nào fail → dọn sạch
+      # if: failure() → chỉ chạy khi step trước fail
+      - name: Rollback on failure
+        if: failure()
+        run: |
+          echo "::warning::Rolling back ${{ inputs.environment }} deployment"
+          docker compose -f ${{ inputs.compose_file }} down --timeout 30
+          echo "::error::Deployment to ${{ inputs.environment }} failed and was rolled back"

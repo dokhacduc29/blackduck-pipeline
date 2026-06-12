@@ -1,0 +1,106 @@
+# =============================================================================
+# Reusable Workflow: SCAN (Trivy)
+# Quality gate + SARIF report + JSON artifact
+# =============================================================================
+
+name: "_scan"
+
+on:
+  workflow_call:
+    inputs:
+      image_name:
+        description: "Full image name"
+        required: true
+        type: string
+      image_tag:
+        description: "Image tag to scan"
+        required: true
+        type: string
+      severity_gate:
+        description: "Severity level that blocks pipeline"
+        required: false
+        type: string
+        default: "CRITICAL"
+      ignore_unfixed:
+        description: "Skip CVEs without available fix"
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  packages: read
+  security-events: write
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # ---- Quality Gate ----
+      # exit-code: 1 → pipeline fail nếu tìm thấy CVE ở severity_gate
+      # ignore-unfixed: true → chỉ block CVE đã có patch mà chưa apply
+      # Trade-off: strict enough to catch real risks, lenient enough to not
+      #   block on upstream issues we can't fix (VD: perl-base in Debian)
+      - name: "Trivy: ${{ inputs.severity_gate }} CVE gate"
+        uses: aquasecurity/trivy-action@0.35.0
+        with:
+          image-ref: "${{ inputs.image_name }}:${{ inputs.image_tag }}"
+          format: "table"
+          severity: ${{ inputs.severity_gate }}
+          exit-code: "1"
+          ignore-unfixed: ${{ inputs.ignore_unfixed }}
+          timeout: "15m"
+
+      # ---- SARIF Report ----
+      # Luôn chạy (if: always()) để có report kể cả khi gate fail
+      # SARIF = Static Analysis Results Interchange Format
+      # GitHub Security tab hiểu format này → hiện CVE trực tiếp trong UI
+      - name: "Trivy: SARIF report"
+        if: always()
+        uses: aquasecurity/trivy-action@0.35.0
+        with:
+          image-ref: "${{ inputs.image_name }}:${{ inputs.image_tag }}"
+          format: "sarif"
+          output: "trivy-results.sarif"
+          severity: "CRITICAL,HIGH,MEDIUM"
+          timeout: "15m"
+
+      # Upload SARIF → GitHub Security tab
+      # continue-on-error: private repo free plan không có Advanced Security
+      # → step warning nhưng pipeline không fail
+      - name: Upload SARIF to GitHub Security
+        if: always()
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-results.sarif
+
+      # ---- JSON Report (archive) ----
+      - name: "Trivy: JSON report"
+        if: always()
+        uses: aquasecurity/trivy-action@0.35.0
+        with:
+          image-ref: "${{ inputs.image_name }}:${{ inputs.image_tag }}"
+          format: "json"
+          output: "trivy-report.json"
+          severity: "CRITICAL,HIGH,MEDIUM"
+          timeout: "15m"
+
+      # Upload artifacts — giữ 30 ngày cho audit trail
+      - name: Upload scan reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-reports
+          path: |
+            trivy-results.sarif
+            trivy-report.json
+          retention-days: 30

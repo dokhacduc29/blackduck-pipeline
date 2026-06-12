@@ -1,13 +1,15 @@
 # ADR-001: CI/CD Pipeline Design Decisions
 
 **Date:** 2026-06-12
+**Updated:** 2026-06-12 (Day 11-16: reusable workflows + multi-env)
 **Status:** Accepted
 **Author:** dokhacduc29
 
 ## Context
 
-Xây dựng CI/CD pipeline production-grade cho BlackDuck Unified Scanner image,
-tích hợp Trivy vulnerability scan, deploy bằng Docker Compose.
+Xây dựng CI/CD pipeline production-grade cho AI Trend Agent,
+tích hợp Trivy vulnerability scan, multi-environment deploy (dev/staging/prod),
+reusable workflows, manual approval gate cho production.
 
 ---
 
@@ -92,3 +94,44 @@ pipeline mới nhất chạy đến deploy.
 PAT cần manage (rotate, revoke), nếu leak = attacker access mọi repo.
 Trade-off: GITHUB_TOKEN chỉ access resources trong cùng repo/org.
 Cross-org cần PAT, nhưng use case này không cần.
+
+## Decision 9: Reusable Workflows thay vì Monolith Pipeline
+
+**Chosen:** 5 files: ci-cd.yml (orchestrator) + 4 reusable (_build, _test, _scan, _deploy)
+**Rejected:** 1 file monolith chứa tất cả logic
+
+**Why:** Deploy logic lặp lại 3 lần (dev/staging/prod). Monolith = copy-paste 3 job gần giống nhau.
+Reusable = viết 1 `_deploy.yml`, gọi 3 lần với params khác. Mỗi workflow tự khai báo permissions
+riêng (least-privilege). Project khác cùng pattern chỉ cần copy workflow files.
+Trade-off: 5 files thay vì 1, phải navigate giữa files khi debug.
+
+## Decision 10: Explicit Secret Passing thay vì `secrets: inherit`
+
+**Chosen:** List từng secret trong `workflow_call.secrets`
+**Rejected:** `secrets: inherit` (truyền tất cả)
+
+**Why:** `inherit` truyền MỌI secrets cho reusable workflow — kể cả secrets mà workflow
+không cần. VD: `_test.yml` không cần API keys, nhưng `inherit` vẫn truyền.
+Nếu test job bị compromise (malicious dependency), attacker có thể đọc secrets thừa.
+Explicit = chỉ truyền cái cần dùng = blast radius nhỏ hơn.
+
+## Decision 11: 3 Environments (dev → staging → prod)
+
+**Chosen:** Sequential promotion: dev (auto) → staging (auto, main only) → prod (manual approval)
+**Rejected:** 1 environment "production" deploy trực tiếp
+
+**Why:** Dev catch deploy bugs sớm (healthcheck sai, missing env var) — chạy trên mọi PR.
+Staging mirror prod — nếu staging pass → prod sẽ pass. Production manual gate = 
+human verification cuối cùng trước khi deploy live.
+Trade-off: pipeline time dài hơn (~3 phút thêm cho 2 deploy stages). Chấp nhận được cho
+production safety.
+
+## Decision 12: ignore-unfixed cho Trivy Gate
+
+**Chosen:** `ignore-unfixed: true` — chỉ block CVE đã có patch
+**Rejected:** Block mọi CRITICAL CVE kể cả unfixed
+
+**Why:** perl-base trong Debian 13.5 có 2 CRITICAL CVE chưa có fix từ upstream.
+Block unfixed = pipeline luôn fail = dev disable scan = mất security value.
+ignore-unfixed = chỉ block CVE em CÓ THỂ fix (bằng cách rebuild với base mới).
+Khi Debian release fix → gate tự động block nếu em chưa rebuild.

@@ -1,0 +1,78 @@
+# =============================================================================
+# Reusable Workflow: TEST
+# Unit tests (pytest) + Smoke tests (container)
+# =============================================================================
+
+name: "_test"
+
+on:
+  workflow_call:
+    inputs:
+      image_name:
+        description: "Full image name"
+        required: true
+        type: string
+      image_tag:
+        description: "Image tag to pull for smoke test"
+        required: true
+        type: string
+      python_version:
+        description: "Python version for unit tests"
+        required: false
+        type: string
+        default: "3.13"
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ---- Unit Tests ----
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python_version }}
+
+      # pip cache: tránh download lại packages mỗi run
+      # hashFiles: cache invalidate khi requirements.txt thay đổi
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ runner.os }}-${{ hashFiles('Backend/requirements.txt') }}
+          restore-keys: pip-${{ runner.os }}-
+
+      - name: Install test dependencies
+        run: |
+          pip install -r Backend/requirements.txt
+          pip install pytest pytest-asyncio
+
+      - name: Run unit tests
+        run: |
+          cd Backend
+          python -m pytest ai_trend_agent.Tests/test_agents.py -v \
+            --tb=short \
+            --no-header
+          # --tb=short: traceback ngắn gọn, đủ debug
+          # --no-header: bỏ header thừa
+
+      # ---- Smoke Test (container) ----
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull built image
+        run: docker pull "${{ inputs.image_name }}:${{ inputs.image_tag }}"
+
+      - name: Run smoke tests
+        run: |
+          chmod +x tests/smoke-test.sh
+          ./tests/smoke-test.sh "${{ inputs.image_name }}:${{ inputs.image_tag }}"
