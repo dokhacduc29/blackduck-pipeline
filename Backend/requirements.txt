@@ -1,0 +1,15 @@
+# =====================================================================
+# requirements.txt — Danh sách thư viện cần cài đặt
+# =====================================================================
+# CÁCH SỬ DỤNG: pip install -r requirements.txt
+# File này giúp người khác (hoặc Server Cloud) biết dự án cần thư viện gì.
+
+httpx==0.28.1           # Thư viện HTTP bất đồng bộ (thay thế requests)
+python-dotenv==1.2.2    # Đọc file .env chứa API Key
+pandas==3.0.2           # Xử lý dữ liệu dạng bảng
+streamlit==1.56.0       # Dashboard trực quan hóa dữ liệu
+google-genai            # [Phase 4] Tương tác với Google Gemini API (SDK mới — code dùng `from google import genai`)
+pytest==8.3.4           # [Phase 5] Khung Unit Testing chuyên nghiệp
+pytest-asyncio==0.25.0  # [Phase 5] Hỗ trợ kiểm thử các hàm async/await
+supabase==2.11.0        # [Phase 5] Supabase Python client cho cloud database
+python-telegram-bot==21.9  # [Phase 6] Telegram Bot API client (async, httpx-based)

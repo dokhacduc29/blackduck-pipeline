@@ -1,0 +1,42 @@
+# Git & IDE
+.git
+.gitignore
+.vscode
+.claude
+*.md
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+venv/
+.venv/
+
+# Test & Dev (không cần trong prod image)
+Backend/ai_trend_agent.Tests/
+Backend/quick_test.py
+Backend/test_supabase_connection.py
+
+# Secrets
+Backend/.env
+.env
+*.env
+
+# Runtime data (generated at runtime)
+Backend/data/
+data/
+
+# Docs
+docs/
+knowledge/
+Frontend/
+
+# CI/CD files (không cần trong image)
+.github/
+tests/
+docker-compose.yml
+
+# OS
+.DS_Store
+Thumbs.db

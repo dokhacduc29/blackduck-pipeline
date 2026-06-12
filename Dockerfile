@@ -1,61 +1,61 @@
-# ============================================================
-# Multi-stage Dockerfile — DevSecOps Pipeline Demo
-# ============================================================
-# TẠI SAO multi-stage: tách build dependencies (pip, gcc) khỏi runtime
-# → image nhỏ hơn, ít CVE hơn, Trivy scan sạch hơn
+# =====================================================================
+# Dockerfile — AI Trend Agent v3.1
+# Multi-stage build: tách build deps khỏi runtime → image nhỏ, ít CVE
+# =====================================================================
 
-# === Stage 1: BUILD ===
-# python:3.13-slim thay vì python:3.13 — giảm ~600MB attack surface
+# ── STAGE 1: Builder — cài dependencies vào /install ──
 FROM python:3.13-slim AS builder
 
-WORKDIR /app
-COPY requirements.txt .
+WORKDIR /install
 
-# --no-cache-dir: không lưu pip cache trong image → giảm size
-# --prefix=/install: cài vào thư mục riêng để COPY sang stage 2 sạch sẽ
-RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
+# Copy requirements trước → tận dụng Docker layer cache
+# Khi requirements không đổi, Docker skip layer này → build nhanh hơn
+COPY Backend/requirements.txt .
 
-# === Stage 2: RUNTIME ===
-FROM python:3.13-slim
+# Chỉ cài production deps (bỏ pytest, streamlit, pandas — không cần trong prod)
+# --no-cache-dir: không lưu pip cache vào image → giảm ~50MB
+# --prefix=/install: cài vào thư mục riêng để COPY sạch sang stage 2
+RUN pip install --no-cache-dir --prefix=/install \
+    httpx==0.28.1 \
+    python-dotenv==1.2.2 \
+    google-generativeai \
+    supabase==2.11.0 \
+    python-telegram-bot==21.9
 
-# Metadata OCI — traceability khi inspect image
+# ── STAGE 2: Runtime — chỉ chứa những gì cần chạy ──
+FROM python:3.13-slim AS runtime
+
 LABEL maintainer="dokhacduc29" \
-      version="1.0" \
-      description="DevSecOps Pipeline Demo - Day 10+16" \
+      version="3.1.0" \
+      description="AI Trend Agent - automated AI news pipeline" \
       org.opencontainers.image.source="https://github.com/dokhacduc29/blackduck-pipeline"
 
-# Non-root user — best practice
-# TẠI SAO: nếu container bị exploit, attacker chỉ có quyền appuser, không phải root
-# Trivy cũng flag "running as root" là misconfiguration
-RUN useradd --create-home --shell /bin/bash appuser
-
-# Cài curl cho HEALTHCHECK
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends curl && \
-    rm -rf /var/lib/apt/lists/*
+# Non-root user — nếu container bị exploit, attacker chỉ có quyền appuser
+RUN addgroup --system appgroup && \
+    adduser --system --ingroup appgroup --no-create-home appuser
 
 WORKDIR /app
 
-# COPY dependencies từ builder — chỉ lấy packages đã cài, không mang pip/cache
+# Copy packages từ builder (chỉ production deps, không có pytest/streamlit)
 COPY --from=builder /install /usr/local
 
-# COPY app code
-COPY app.py .
+# Copy source code
+COPY --chown=appuser:appgroup Backend/ .
 
-# Biến môi trường — truyền version từ CI/CD pipeline
-ENV APP_VERSION=dev
+# Thư mục data cho runtime output (CSV fallback, AI cache)
+RUN mkdir -p /app/data && chown appuser:appgroup /app/data
 
-# Chuyển sang non-root TRƯỚC EXPOSE và CMD
+# Environment: non-secret defaults
+# Secrets (API keys) inject qua CI/CD secrets hoặc K8s Secret
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONPATH=/app:/app/ai_trend_agent.Domain:/app/ai_trend_agent.Application:/app/ai_trend_agent.Infrastructure \
+    TOPIC="Artificial Intelligence"
+
 USER appuser
 
-EXPOSE 5000
+# Healthcheck — verify main.py tồn tại + Python runtime OK
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+    CMD python -c "import os; exit(0 if os.path.exists('/app/ai_trend_agent.WebApi/main.py') else 1)"
 
-# HEALTHCHECK — Docker Compose dùng để verify container healthy
-# curl -f: fail silently (exit code 22) nếu HTTP error
-HEALTHCHECK --interval=15s --timeout=3s --retries=3 \
-    CMD curl -f http://localhost:5000/health || exit 1
-
-# gunicorn thay flask dev server — production-ready
-# --workers 2: 2 worker processes, đủ cho demo
-# --bind 0.0.0.0: listen tất cả interfaces
-CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "2", "app:app"]
+CMD ["python", "ai_trend_agent.WebApi/main.py"]

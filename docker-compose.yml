@@ -1,25 +1,30 @@
-# docker-compose.yml — Deploy configuration
+# docker-compose.yml — AI Trend Agent deploy config
 services:
-  app:
-    image: ${IMAGE_NAME:-ghcr.io/dokhacduc29/blackduck-unified}:${IMAGE_TAG:-latest}
-    container_name: devsecops-demo
-    ports:
-      - "5000:5000"
+  agent:
+    image: ${IMAGE_NAME:-ghcr.io/dokhacduc29/ai-trend-agent}:${IMAGE_TAG:-latest}
+    container_name: ai-trend-agent
     environment:
-      - APP_VERSION=${IMAGE_TAG:-dev}
+      # Secrets inject từ CI/CD hoặc .env file (đã gitignore)
+      - NEWS_API_KEY=${NEWS_API_KEY:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - SUPABASE_URL=${SUPABASE_URL:-}
+      - SUPABASE_KEY=${SUPABASE_KEY:-}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - TOPIC=${TOPIC:-Artificial Intelligence}
+    volumes:
+      - agent-data:/app/data
     deploy:
       resources:
         limits:
-          memory: 256M
-          cpus: "0.5"
+          memory: 512M
+          cpus: "1.0"
     logging:
       driver: json-file
       options:
-        max-size: "5m"
+        max-size: "10m"
         max-file: "3"
     restart: on-failure:3
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
-      interval: 15s
-      timeout: 3s
-      retries: 3
+
+volumes:
+  agent-data:
+    driver: local
