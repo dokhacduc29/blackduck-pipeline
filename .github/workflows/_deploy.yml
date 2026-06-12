@@ -70,11 +70,10 @@ jobs:
       - name: Pull image
         run: docker pull "${{ inputs.image_name }}:${{ inputs.image_tag }}"
 
-      # Deploy: chạy container với secrets inject qua env vars
-      # AI Trend Agent là BATCH JOB (chạy → scrape → save → exit)
-      # Không phải web server → không dùng --wait/healthcheck
-      # docker compose up --abort-on-container-exit: chờ container chạy xong,
-      #   lấy exit code làm kết quả deploy
+      # Deploy: chạy container ở background (-d = detached)
+      # AI Trend Agent là long-running service (loop vô tận, sleep 4h giữa các lần cào)
+      # CI/CD chỉ có nhiệm vụ: build image → push → khởi động container → exit
+      # Container tiếp tục chạy trên server sau khi job kết thúc
       - name: "Deploy to ${{ inputs.environment }}"
         env:
           IMAGE_NAME: ${{ inputs.image_name }}
@@ -88,27 +87,26 @@ jobs:
           echo "=== Deploying to ${{ inputs.environment }} ==="
           echo "Image: $IMAGE_NAME:$IMAGE_TAG"
 
-          # --abort-on-container-exit: dừng khi container exit
-          # --exit-code-from agent: lấy exit code của service 'agent'
-          # Exit 0 = pipeline chạy thành công, non-zero = có lỗi
-          docker compose -f ${{ inputs.compose_file }} up \
-            --abort-on-container-exit \
-            --exit-code-from agent \
-            --timeout 120
+          # -d: detached — khởi động container rồi job exit ngay
+          # Container vẫn chạy liên tục trên server (long-running service)
+          docker compose -f ${{ inputs.compose_file }} up -d
 
-          echo "=== Deploy completed successfully ==="
+          echo "=== Deploy completed — container running in background ==="
 
-      # Verify: kiểm tra container đã exit clean
+      # Verify: kiểm tra container đang Up sau khi start
       - name: Verify deployment
         if: success()
         run: |
-          echo "::notice::Deployment to ${{ inputs.environment }} completed successfully"
-          # Show container logs cho audit trail
-          docker compose -f ${{ inputs.compose_file }} logs --tail=20 || true
+          sleep 5  # chờ container khởi động ổn định
+          docker compose -f ${{ inputs.compose_file }} ps
+          # Fail nếu container không ở trạng thái running
+          docker compose -f ${{ inputs.compose_file }} ps | grep "ai-trend-agent" | grep -E "Up|running"
+          echo "::notice::Deployment to ${{ inputs.environment }} completed — service is running"
 
-      # Cleanup: dọn container sau khi chạy xong (batch job)
-      - name: Cleanup
-        if: always()
+      # Cleanup step này chỉ dọn nếu deploy fail
+      # Nếu success: KHÔNG down container — nó cần tiếp tục chạy
+      - name: Cleanup on failure
+        if: failure()
         run: |
           docker compose -f ${{ inputs.compose_file }} down --timeout 30 || true
 
