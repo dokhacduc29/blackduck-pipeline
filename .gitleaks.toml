@@ -46,11 +46,11 @@ tags = ["newsapi", "secret"]
 
 [[rules]]
 id = "generic-env-assignment"
-description = "Hardcoded secret in env assignment (KEY=value, not placeholder)"
-# Match KEY=<value> thoả: không phải placeholder (your_*, <...>, example, xxx)
-regex = '''(?i)(api_key|secret|password|token|credential)[^\w=]*=[^\s"']{8,}'''
+description = "Hardcoded secret string literal in assignment (KEY='actual_value')"
+# Chỉ bắt khi giá trị là STRING LITERAL (trong nháy đơn/đôi)
+# Tránh bắt nhầm keyword argument: func(api_key=variable)
+regex = '''(?i)(api_key|secret|password|token|credential)\s*=\s*["'][^"']{8,}["']'''
 tags = ["generic", "secret"]
-# Loại trừ pattern placeholder rõ ràng
 [rules.allowlist]
 regexes = [
   '''your_.*_here''',
