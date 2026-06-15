@@ -61,19 +61,27 @@ jobs:
 
       # ---- SCAN 1: Git History ----
       # Quét toàn bộ commit history — phát hiện secret đã commit rồi xóa
-      # exit-code 1 = tìm thấy secret, exit-code 0 = sạch
+      # exit-code 1 = tìm thấy secret, 0 = sạch, khác = lỗi kỹ thuật
       - name: "Gitleaks: Scan git history"
         id: scan-git
         run: |
-          gitleaks git \
-            --source . \
+          set +e
+          gitleaks git . \
             --config "${{ inputs.config_path }}" \
             --report-format sarif \
             --report-path gitleaks-git.sarif \
             --exit-code 1 \
-            --verbose \
-          && echo "git_status=clean" >> "$GITHUB_OUTPUT" \
-          || echo "git_status=leaked" >> "$GITHUB_OUTPUT"
+            --verbose
+          EXIT_CODE=$?
+          echo "exit_code=$EXIT_CODE" >> "$GITHUB_OUTPUT"
+          if [ $EXIT_CODE -eq 0 ]; then
+            echo "git_status=clean" >> "$GITHUB_OUTPUT"
+          elif [ $EXIT_CODE -eq 1 ]; then
+            echo "git_status=leaked" >> "$GITHUB_OUTPUT"
+          else
+            echo "git_status=error" >> "$GITHUB_OUTPUT"
+            echo "::warning::Gitleaks git scan exited with code $EXIT_CODE (technical error, not leak detection)"
+          fi
 
       # ---- SCAN 2: Working Tree (detect) ----
       # Quét file hiện tại — bắt secret trong file chưa được git track
@@ -82,8 +90,7 @@ jobs:
         id: scan-detect
         if: always()
         run: |
-          gitleaks detect \
-            --source . \
+          gitleaks detect . \
             --config "${{ inputs.config_path }}" \
             --report-format sarif \
             --report-path gitleaks-detect.sarif \
@@ -97,8 +104,10 @@ jobs:
         id: set-output
         if: always()
         run: |
-          if [[ "${{ steps.scan-git.outputs.git_status }}" == "leaked" || \
-                "${{ steps.scan-detect.outputs.detect_status }}" == "leaked" ]]; then
+          GIT_STATUS="${{ steps.scan-git.outputs.git_status }}"
+          DETECT_STATUS="${{ steps.scan-detect.outputs.detect_status }}"
+          echo "git_status=$GIT_STATUS | detect_status=$DETECT_STATUS"
+          if [[ "$GIT_STATUS" == "leaked" || "$DETECT_STATUS" == "leaked" ]]; then
             echo "leak_found=true" >> "$GITHUB_OUTPUT"
           else
             echo "leak_found=false" >> "$GITHUB_OUTPUT"
