@@ -1,0 +1,144 @@
+# =============================================================================
+# Reusable Workflow: GITLEAKS — Secret Detection
+# Chạy TRƯỚC build để fail-fast nếu có secret bị lộ
+#
+# Scan 2 lớp:
+#   1. git history  → phát hiện secret đã commit vào bất kỳ commit nào
+#   2. working tree → phát hiện secret trong file hiện tại (kể cả unstaged)
+#
+# Gọi bằng: uses: ./.github/workflows/_gitleaks.yml
+# =============================================================================
+
+name: "_gitleaks"
+
+on:
+  workflow_call:
+    inputs:
+      config_path:
+        description: "Đường dẫn tới .gitleaks.toml"
+        required: false
+        type: string
+        default: ".gitleaks.toml"
+      fail_on_leak:
+        description: "Fail pipeline nếu phát hiện secret (set false để chỉ report)"
+        required: false
+        type: boolean
+        default: true
+    outputs:
+      leak_found:
+        description: "true nếu phát hiện ít nhất 1 secret"
+        value: ${{ jobs.gitleaks.outputs.leak_found }}
+
+permissions:
+  contents: read
+  security-events: write   # upload SARIF lên GitHub Security tab
+
+jobs:
+  gitleaks:
+    name: "Secret Scan (Gitleaks)"
+    runs-on: ubuntu-latest
+
+    outputs:
+      leak_found: ${{ steps.set-output.outputs.leak_found }}
+
+    steps:
+      # fetch-depth: 0 → lấy toàn bộ git history
+      # Nếu chỉ checkout shallow (depth=1), Gitleaks chỉ thấy commit mới nhất
+      - name: Checkout (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Cài Gitleaks binary trực tiếp — không dùng action wrapper
+      # → không cần GITLEAKS_LICENSE, kiểm soát version chính xác
+      - name: Install Gitleaks v8.28.0
+        run: |
+          curl -sSL \
+            https://github.com/gitleaks/gitleaks/releases/download/v8.28.0/gitleaks_8.28.0_linux_x64.tar.gz \
+            | tar -xz gitleaks
+          sudo mv gitleaks /usr/local/bin/
+          gitleaks version
+
+      # ---- SCAN 1: Git History ----
+      # Quét toàn bộ commit history — phát hiện secret đã commit rồi xóa
+      # exit-code 1 = tìm thấy secret, exit-code 0 = sạch
+      - name: "Gitleaks: Scan git history"
+        id: scan-git
+        run: |
+          gitleaks git \
+            --source . \
+            --config "${{ inputs.config_path }}" \
+            --report-format sarif \
+            --report-path gitleaks-git.sarif \
+            --exit-code 1 \
+            --verbose \
+          && echo "git_status=clean" >> "$GITHUB_OUTPUT" \
+          || echo "git_status=leaked" >> "$GITHUB_OUTPUT"
+
+      # ---- SCAN 2: Working Tree (detect) ----
+      # Quét file hiện tại — bắt secret trong file chưa được git track
+      # if: always() → chạy kể cả khi scan 1 fail để có đủ report
+      - name: "Gitleaks: Scan working tree"
+        id: scan-detect
+        if: always()
+        run: |
+          gitleaks detect \
+            --source . \
+            --config "${{ inputs.config_path }}" \
+            --report-format sarif \
+            --report-path gitleaks-detect.sarif \
+            --exit-code 1 \
+            --verbose \
+          && echo "detect_status=clean" >> "$GITHUB_OUTPUT" \
+          || echo "detect_status=leaked" >> "$GITHUB_OUTPUT"
+
+      # Tổng hợp kết quả — set output cho caller workflow
+      - name: Set output
+        id: set-output
+        if: always()
+        run: |
+          if [[ "${{ steps.scan-git.outputs.git_status }}" == "leaked" || \
+                "${{ steps.scan-detect.outputs.detect_status }}" == "leaked" ]]; then
+            echo "leak_found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "leak_found=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # ---- Upload SARIF → GitHub Security tab ----
+      # Hiển thị findings trực tiếp trong tab "Security → Code scanning"
+      # continue-on-error: private repo free plan không có Advanced Security
+      - name: Upload SARIF (git history scan)
+        if: always()
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: gitleaks-git.sarif
+          category: gitleaks-git
+
+      - name: Upload SARIF (working tree scan)
+        if: always()
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: gitleaks-detect.sarif
+          category: gitleaks-detect
+
+      # ---- Archive Reports ----
+      - name: Upload scan artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gitleaks-reports
+          path: |
+            gitleaks-git.sarif
+            gitleaks-detect.sarif
+          retention-days: 30
+
+      # ---- Hard Fail nếu có secret ----
+      # Tách bước fail ra cuối để đảm bảo report đã được upload trước
+      - name: "Fail pipeline if secrets found"
+        if: ${{ inputs.fail_on_leak && steps.set-output.outputs.leak_found == 'true' }}
+        run: |
+          echo "::error::Gitleaks detected secrets in this repository!"
+          echo "::error::Check the 'gitleaks-reports' artifact for details."
+          exit 1

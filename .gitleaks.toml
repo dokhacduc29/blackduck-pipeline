@@ -1,0 +1,96 @@
+# =============================================================================
+# Gitleaks Configuration — AI Trend Agent
+# Docs: https://github.com/gitleaks/gitleaks#configuration
+# =============================================================================
+#
+# BUILT-IN RULES (useDefault = true) tự động detect:
+#   - AWS keys (AKIA..., aws_secret_access_key)
+#   - GitHub tokens (ghp_, gho_, ghu_, ghs_)
+#   - Google API keys (AIza...)
+#   - Stripe keys (sk_live_, pk_live_)
+#   - Slack tokens (xox...)
+#   - JWT tokens
+#   - RSA/EC/PGP private keys
+#   - Telegram Bot tokens (123456:AA...)
+#   - Supabase service role keys (eyJ...)
+#   - NPM / PyPI tokens
+#   - Twilio / SendGrid / Mailchimp keys
+#   - Generic password/secret assignments
+# =============================================================================
+
+title = "Gitleaks Config - AI Trend Agent"
+
+# Kế thừa toàn bộ ~150 built-in rules
+[extend]
+useDefault = true
+
+# =============================================================================
+# CUSTOM RULES — bổ sung cho built-in
+# Thêm khi phát hiện pattern chưa có trong default
+# =============================================================================
+
+[[rules]]
+id = "supabase-anon-key"
+description = "Supabase anon/service_role JWT key"
+# eyJ = base64 của {"alg":... — là JWT header của Supabase
+regex = '''eyJ[a-zA-Z0-9_-]{20,}\.[a-zA-Z0-9_-]{20,}\.[a-zA-Z0-9_-]{20,}'''
+tags = ["supabase", "jwt", "secret"]
+# Chỉ flag khi đứng gần keyword supabase/SUPABASE
+keywords = ["supabase", "SUPABASE", "sb-"]
+
+[[rules]]
+id = "newsapi-key"
+description = "NewsAPI key (32-char hex)"
+regex = '''(?i)(news.?api.?key|newsapi)[^\w]([a-f0-9]{32})'''
+tags = ["newsapi", "secret"]
+
+[[rules]]
+id = "generic-env-assignment"
+description = "Hardcoded secret in env assignment (KEY=value, not placeholder)"
+# Match KEY=<value> thoả: không phải placeholder (your_*, <...>, example, xxx)
+regex = '''(?i)(api_key|secret|password|token|credential)[^\w=]*=[^\s"']{8,}'''
+tags = ["generic", "secret"]
+# Loại trừ pattern placeholder rõ ràng
+[rules.allowlist]
+regexes = [
+  '''your_.*_here''',
+  '''<[^>]+>''',
+  '''example''',
+  '''xxx+''',
+  '''changeme''',
+  '''placeholder''',
+  '''dummy''',
+  '''test''',
+]
+
+# =============================================================================
+# GLOBAL ALLOWLIST — file/path/commit không cần scan
+# =============================================================================
+
+[allowlist]
+description = "Allowlist toàn cục"
+
+# Files chứa placeholder — không phải secret thật
+paths = [
+  '''^\.env\.example$''',
+  '''^\.env\.sample$''',
+  '''^\.env\.template$''',
+  '''^docs/.*''',
+  '''^tests/.*''',
+  '''^Backend/ai_trend_agent\.Tests/.*''',
+  '''.*\.md$''',
+  '''SECURITY\.md''',
+]
+
+# Regex pattern rõ là placeholder
+regexes = [
+  '''your_[a-z_]+_here''',
+  '''xxxx+''',
+  '''<YOUR[_A-Z]+>''',
+  '''changeme''',
+  # GitHub Actions expression — không phải secret thật
+  '''\$\{\{[^}]+\}\}''',
+]
+
+# Commit được bỏ qua (VD: commit khởi tạo repo với boilerplate)
+# commits = ["abc1234"]

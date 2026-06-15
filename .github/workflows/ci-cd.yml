@@ -62,9 +62,20 @@ concurrency:
 jobs:
 
   # ===========================================================================
-  # STAGE 1: BUILD
+  # STAGE 0: SECRETS SCAN (Gitleaks) — chạy TRƯỚC BUILD
+  # Fail-fast: nếu lộ secret → block toàn bộ pipeline ngay lập tức
+  # Không cần image → chạy độc lập, không depends vào ai
+  # ===========================================================================
+  secrets-scan:
+    uses: ./.github/workflows/_gitleaks.yml
+    with:
+      fail_on_leak: true
+
+  # ===========================================================================
+  # STAGE 1: BUILD — chỉ chạy khi secrets-scan pass
   # ===========================================================================
   build:
+    needs: secrets-scan
     uses: ./.github/workflows/_build.yml
     with:
       image_name: ghcr.io/${{ github.repository_owner }}/ai-trend-agent
