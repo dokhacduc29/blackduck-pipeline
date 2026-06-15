@@ -45,7 +45,7 @@ jobs:
       # fetch-depth: 0 → lấy toàn bộ git history
       # Nếu chỉ checkout shallow (depth=1), Gitleaks chỉ thấy commit mới nhất
       - name: Checkout (full history)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4.2.2
         with:
           fetch-depth: 0
 
@@ -114,12 +114,11 @@ jobs:
           fi
 
       # ---- Upload SARIF → GitHub Security tab ----
-      # Hiển thị findings trực tiếp trong tab "Security → Code scanning"
-      # continue-on-error: private repo free plan không có Advanced Security
+      # Yêu cầu: repo public HOẶC GitHub Advanced Security (paid plan)
       - name: Upload SARIF (git history scan)
         if: always()
         continue-on-error: true
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: gitleaks-git.sarif
           category: gitleaks-git
@@ -127,7 +126,7 @@ jobs:
       - name: Upload SARIF (working tree scan)
         if: always()
         continue-on-error: true
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: gitleaks-detect.sarif
           category: gitleaks-detect
@@ -135,7 +134,7 @@ jobs:
       # ---- Archive Reports ----
       - name: Upload scan artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v4.6.2
         with:
           name: gitleaks-reports
           path: |

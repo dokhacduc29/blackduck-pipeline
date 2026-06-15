@@ -74,12 +74,11 @@ jobs:
           timeout: "15m"
 
       # Upload SARIF → GitHub Security tab
-      # continue-on-error: private repo free plan không có Advanced Security
-      # → step warning nhưng pipeline không fail
+      # Yêu cầu: repo public HOẶC GitHub Advanced Security (paid plan)
       - name: Upload SARIF to GitHub Security
         if: always()
         continue-on-error: true
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: trivy-results.sarif
 
