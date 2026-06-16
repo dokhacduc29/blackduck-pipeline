@@ -80,6 +80,8 @@ paths = [
   '''^Backend/ai_trend_agent\.Tests/.*''',
   '''.*\.md$''',
   '''SECURITY\.md''',
+  # File mock dùng để test Gitleaks pre-commit hook (Day 18)
+  '''^test_fake_secret\.py$''',
 ]
 
 # Regex pattern rõ là placeholder

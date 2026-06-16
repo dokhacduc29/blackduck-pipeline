@@ -1,0 +1,94 @@
+# =============================================================================
+# Reusable Workflow: SAST (Semgrep)
+# Static Application Security Testing — scan source code trước khi build
+# Chạy song song với Gitleaks (Stage 0) — không cần image
+# =============================================================================
+
+name: "_sast"
+
+on:
+  workflow_call:
+    inputs:
+      severity_gate:
+        description: "Severity tối thiểu để block pipeline (ERROR/WARNING)"
+        required: false
+        type: string
+        default: "ERROR"
+      config:
+        description: "Semgrep ruleset (auto / p/owasp-top-ten / p/python)"
+        required: false
+        type: string
+        default: "auto"
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  sast:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Semgrep
+        run: pip install semgrep
+
+      # ---- SAST Quality Gate ----
+      # --error: exit code 1 nếu có finding ở severity_gate → pipeline fail
+      # --severity: chỉ report từ mức này trở lên
+      # Trade-off: ERROR only = ít noise, chỉ block lỗi exploit được ngay.
+      #   Nếu dùng WARNING → nhiều FP hơn, cần triage thường xuyên hơn.
+      - name: "Semgrep SAST gate (${{ inputs.severity_gate }})"
+        env:
+          CONFIG: ${{ inputs.config }}
+          SEVERITY: ${{ inputs.severity_gate }}
+          SEMGREP_SEND_METRICS: "off"
+        run: |
+          semgrep --config "$CONFIG" \
+                  --severity "$SEVERITY" \
+                  --error \
+                  .
+
+      # ---- SARIF Report (luôn chạy kể cả khi gate fail) ----
+      # SARIF = Static Analysis Results Interchange Format
+      # GitHub Security tab đọc được format này → hiện findings trong UI
+      # Day 20: sẽ dùng report này để triage false positive bằng LLM
+      - name: "Semgrep SARIF report"
+        if: always()
+        env:
+          SEMGREP_SEND_METRICS: "off"
+        run: |
+          semgrep --config auto \
+                  --sarif \
+                  -o semgrep-results.sarif \
+                  . 2>/dev/null || true
+
+      - name: Upload SARIF to GitHub Security tab
+        if: always()
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: semgrep-results.sarif
+          category: semgrep-sast
+
+      # ---- JSON artifact (audit trail 30 ngày) ----
+      - name: "Semgrep JSON report"
+        if: always()
+        env:
+          SEMGREP_SEND_METRICS: "off"
+        run: |
+          semgrep --config auto \
+                  --json \
+                  -o semgrep-report.json \
+                  . 2>/dev/null || true
+
+      - name: Upload Semgrep reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: semgrep-reports
+          path: |
+            semgrep-results.sarif
+            semgrep-report.json
+          retention-days: 30

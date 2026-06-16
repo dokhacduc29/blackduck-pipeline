@@ -70,9 +70,15 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Pull built image
-        run: docker pull "${{ inputs.image_name }}:${{ inputs.image_tag }}"
+        env:
+          IMAGE_NAME: ${{ inputs.image_name }}
+          IMAGE_TAG: ${{ inputs.image_tag }}
+        run: docker pull "$IMAGE_NAME:$IMAGE_TAG"
 
       - name: Run smoke tests
+        env:
+          IMAGE_NAME: ${{ inputs.image_name }}
+          IMAGE_TAG: ${{ inputs.image_tag }}
         run: |
           chmod +x tests/smoke-test.sh
-          ./tests/smoke-test.sh "${{ inputs.image_name }}:${{ inputs.image_tag }}"
+          ./tests/smoke-test.sh "$IMAGE_NAME:$IMAGE_TAG"

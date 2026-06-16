@@ -68,7 +68,10 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Pull image
-        run: docker pull "${{ inputs.image_name }}:${{ inputs.image_tag }}"
+        env:
+          IMAGE_NAME: ${{ inputs.image_name }}
+          IMAGE_TAG: ${{ inputs.image_tag }}
+        run: docker pull "$IMAGE_NAME:$IMAGE_TAG"
 
       # Deploy: chạy container ở background (-d = detached)
       # AI Trend Agent là long-running service (loop vô tận, sleep 4h giữa các lần cào)
@@ -78,41 +81,51 @@ jobs:
         env:
           IMAGE_NAME: ${{ inputs.image_name }}
           IMAGE_TAG: ${{ inputs.image_tag }}
+          ENVIRONMENT: ${{ inputs.environment }}
+          COMPOSE_FILE: ${{ inputs.compose_file }}
           NEWS_API_KEY: ${{ secrets.NEWS_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         run: |
-          echo "=== Deploying to ${{ inputs.environment }} ==="
+          echo "=== Deploying to $ENVIRONMENT ==="
           echo "Image: $IMAGE_NAME:$IMAGE_TAG"
 
           # -d: detached — khởi động container rồi job exit ngay
           # Container vẫn chạy liên tục trên server (long-running service)
-          docker compose -f ${{ inputs.compose_file }} up -d
+          docker compose -f "$COMPOSE_FILE" up -d
 
           echo "=== Deploy completed — container running in background ==="
 
       # Verify: kiểm tra container đang Up sau khi start
       - name: Verify deployment
         if: success()
+        env:
+          COMPOSE_FILE: ${{ inputs.compose_file }}
+          ENVIRONMENT: ${{ inputs.environment }}
         run: |
           sleep 5  # chờ container khởi động ổn định
-          docker compose -f ${{ inputs.compose_file }} ps
+          docker compose -f "$COMPOSE_FILE" ps
           # Fail nếu container không ở trạng thái running
-          docker compose -f ${{ inputs.compose_file }} ps | grep "ai-trend-agent" | grep -E "Up|running"
-          echo "::notice::Deployment to ${{ inputs.environment }} completed — service is running"
+          docker compose -f "$COMPOSE_FILE" ps | grep "ai-trend-agent" | grep -E "Up|running"
+          echo "::notice::Deployment to $ENVIRONMENT completed — service is running"
 
       # Cleanup step này chỉ dọn nếu deploy fail
       # Nếu success: KHÔNG down container — nó cần tiếp tục chạy
       - name: Cleanup on failure
         if: failure()
+        env:
+          COMPOSE_FILE: ${{ inputs.compose_file }}
         run: |
-          docker compose -f ${{ inputs.compose_file }} down --timeout 30 || true
+          docker compose -f "$COMPOSE_FILE" down --timeout 30 || true
 
       # Rollback notification khi fail
       - name: Report failure
         if: failure()
+        env:
+          COMPOSE_FILE: ${{ inputs.compose_file }}
+          ENVIRONMENT: ${{ inputs.environment }}
         run: |
-          echo "::error::Deployment to ${{ inputs.environment }} FAILED"
-          docker compose -f ${{ inputs.compose_file }} logs --tail=50 || true
+          echo "::error::Deployment to $ENVIRONMENT FAILED"
+          docker compose -f "$COMPOSE_FILE" logs --tail=50 || true
