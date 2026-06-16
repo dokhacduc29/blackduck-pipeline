@@ -43,7 +43,7 @@ jobs:
         env:
           CONFIG: ${{ inputs.config }}
           SEVERITY: ${{ inputs.severity_gate }}
-          SEMGREP_SEND_METRICS: "off"
+          SEMGREP_SEND_METRICS: "anonymous"
         run: |
           semgrep --config "$CONFIG" \
                   --severity "$SEVERITY" \
@@ -57,7 +57,7 @@ jobs:
       - name: "Semgrep SARIF report"
         if: always()
         env:
-          SEMGREP_SEND_METRICS: "off"
+          SEMGREP_SEND_METRICS: "anonymous"
         run: |
           semgrep --config auto \
                   --sarif \
@@ -76,7 +76,7 @@ jobs:
       - name: "Semgrep JSON report"
         if: always()
         env:
-          SEMGREP_SEND_METRICS: "off"
+          SEMGREP_SEND_METRICS: "anonymous"
         run: |
           semgrep --config auto \
                   --json \
