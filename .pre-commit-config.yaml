@@ -1,0 +1,30 @@
+# =============================================================
+# Pre-commit Config — Secrets + SAST
+# Cài đặt cho team member mới:
+#   pip install pre-commit
+#   pre-commit install
+#
+# Chạy thủ công:
+#   pre-commit run --all-files
+#   pre-commit run semgrep --all-files
+# =============================================================
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.28.0
+    hooks:
+      - id: gitleaks
+        args: ['--config', '.gitleaks.toml']
+
+  # Day 20: Semgrep custom rules chạy trước khi commit
+  # Chỉ scan custom rules (nhanh) — CI mới chạy full auto ruleset
+  - repo: https://github.com/returntocorp/semgrep
+    rev: v1.99.0
+    hooks:
+      - id: semgrep
+        name: "Semgrep: SQL injection custom rules"
+        args:
+          - '--config=rules/sqli-custom.yaml'
+          - '--severity=ERROR'
+          - '--error'
+          - '--exclude-dir=rules/tests'
+        pass_filenames: false

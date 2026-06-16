@@ -1,0 +1,121 @@
+# =============================================================================
+# Custom Semgrep Rules: SQL Injection (CWE-89)
+# Day 20 — DevSecOps FPT FIM
+#
+# Chạy: semgrep --config rules/sqli-custom.yaml .
+# Test: semgrep --test rules/
+#
+# 3 vector chính cần chặn trong Python:
+#   1. f-string interpolation trực tiếp vào SQL
+#   2. % / .format() formatting vào SQL
+#   3. String concatenation (+) vào SQL
+#
+# Cách an toàn duy nhất: parameterized queries
+#   cursor.execute("SELECT ... WHERE id = %s", (user_id,))
+# =============================================================================
+
+rules:
+
+  # ---------------------------------------------------------------------------
+  # Rule 1: f-string interpolation trong SQL execute / query
+  # TP: cursor.execute(f"SELECT * FROM users WHERE id = {user_id}")
+  # FP: cursor.execute(f"SELECT count(*) FROM {'users'}") — hardcoded string
+  # ---------------------------------------------------------------------------
+  - id: python-sqli-fstring
+    message: >
+      SQL injection via f-string: biến '$VAR' được nhúng trực tiếp vào câu SQL.
+      Dùng parameterized query thay thế:
+        cursor.execute("SELECT ... WHERE id = %s", (user_id,))
+    severity: ERROR
+    languages: [python]
+    pattern-either:
+      - pattern: $DB.execute(f"...", ...)
+      - pattern: $DB.execute(f"...")
+      - pattern: $CURSOR.execute(f"...", ...)
+      - pattern: $CURSOR.execute(f"...")
+      - pattern: $DB.query(f"...")
+      - pattern: $CONN.execute(f"...")
+    metadata:
+      category: security
+      cwe: "CWE-89: Improper Neutralization of Special Elements used in an SQL Command"
+      owasp: "A03:2021 - Injection"
+      confidence: MEDIUM
+      subcategory: [vuln]
+      references:
+        - https://owasp.org/www-community/attacks/SQL_Injection
+        - https://docs.python.org/3/library/sqlite3.html#sqlite3-placeholders
+
+  # ---------------------------------------------------------------------------
+  # Rule 2: % string formatting trong SQL
+  # TP: cursor.execute("SELECT * FROM users WHERE name = '%s'" % username)
+  # TP: cursor.execute("DELETE FROM %s WHERE id = %d" % (table, uid))
+  # ---------------------------------------------------------------------------
+  - id: python-sqli-percent-format
+    message: >
+      SQL injection via % formatting: chuỗi SQL được build bằng toán tử %.
+      Attacker có thể inject SQL qua bất kỳ tham số nào.
+      Dùng parameterized query:
+        cursor.execute("SELECT ... WHERE name = %s", (username,))
+    severity: ERROR
+    languages: [python]
+    pattern-either:
+      - pattern: $DB.execute($SQL % $ARGS)
+      - pattern: $CURSOR.execute($SQL % $ARGS)
+      - pattern: $DB.query($SQL % $ARGS)
+      - pattern: $CONN.execute($SQL % $ARGS)
+    metadata:
+      category: security
+      cwe: "CWE-89"
+      owasp: "A03:2021"
+      confidence: HIGH
+      subcategory: [vuln]
+
+  # ---------------------------------------------------------------------------
+  # Rule 3: .format() string method trong SQL
+  # TP: cursor.execute("SELECT * FROM users WHERE id = {}".format(user_id))
+  # TP: cursor.execute("INSERT INTO {table} VALUES ('{val}')".format(**kwargs))
+  # ---------------------------------------------------------------------------
+  - id: python-sqli-format-method
+    message: >
+      SQL injection via .format(): phương thức format() build câu SQL động.
+      Cực kỳ nguy hiểm với nested format hay **kwargs.
+      Dùng parameterized query thay vì string formatting.
+    severity: ERROR
+    languages: [python]
+    pattern-either:
+      - pattern: $DB.execute("...".format(...))
+      - pattern: $CURSOR.execute("...".format(...))
+      - pattern: $DB.query("...".format(...))
+      - pattern: $CONN.execute("...".format(...))
+      - pattern: $DB.execute($SQL.format(...))
+      - pattern: $CURSOR.execute($SQL.format(...))
+    metadata:
+      category: security
+      cwe: "CWE-89"
+      owasp: "A03:2021"
+      confidence: HIGH
+      subcategory: [vuln]
+
+  # ---------------------------------------------------------------------------
+  # Rule 4: String concatenation (+) trong SQL
+  # TP: cursor.execute("SELECT * FROM users WHERE id = " + user_id)
+  # TP: query = "DELETE FROM " + table_name; cursor.execute(query)
+  # ---------------------------------------------------------------------------
+  - id: python-sqli-string-concat
+    message: >
+      SQL injection via string concatenation: toán tử '+' ghép biến vào SQL.
+      Không có cách nào escape đủ an toàn với concatenation.
+      Dùng parameterized query hoặc ORM (SQLAlchemy / Supabase client).
+    severity: ERROR
+    languages: [python]
+    pattern-either:
+      - pattern: $DB.execute($A + $B)
+      - pattern: $CURSOR.execute($A + $B)
+      - pattern: $DB.query($A + $B)
+      - pattern: $CONN.execute($A + $B)
+    metadata:
+      category: security
+      cwe: "CWE-89"
+      owasp: "A03:2021"
+      confidence: MEDIUM
+      subcategory: [vuln]

@@ -19,6 +19,11 @@ on:
         required: false
         type: string
         default: "auto"
+      run_triage:
+        description: "Chạy LLM triage cho false positive (cần ANTHROPIC_API_KEY)"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -34,7 +39,7 @@ jobs:
       - name: Install Semgrep
         run: pip install semgrep
 
-      # ---- SAST Quality Gate ----
+      # ---- SAST Quality Gate (ruleset cấu hình được) ----
       # --error: exit code 1 nếu có finding ở severity_gate → pipeline fail
       # --severity: chỉ report từ mức này trở lên
       # Trade-off: ERROR only = ít noise, chỉ block lỗi exploit được ngay.
@@ -48,19 +53,48 @@ jobs:
           semgrep --config "$CONFIG" \
                   --severity "$SEVERITY" \
                   --error \
+                  --exclude-dir rules/tests \
                   .
+
+      # ---- Custom Rules Gate (Day 20) ----
+      # Chạy riêng rule tự viết để dễ debug khi fail
+      # --exclude-dir rules/tests: bỏ qua test target file (chứa code TP có chủ đích)
+      # Nếu không tìm thấy file rule → skip không lỗi (|| true)
+      - name: "Semgrep custom rules gate (SQL injection)"
+        env:
+          SEMGREP_SEND_METRICS: "on"
+        run: |
+          if [ -f "rules/sqli-custom.yaml" ]; then
+            echo "Running custom SQL injection rules..."
+            semgrep --config rules/sqli-custom.yaml \
+                    --severity ERROR \
+                    --error \
+                    --exclude-dir rules/tests \
+                    . || {
+              echo "::error::Custom SQL injection rule triggered — xem findings bên dưới"
+              exit 1
+            }
+          else
+            echo "No custom rules file found at rules/sqli-custom.yaml, skipping."
+          fi
 
       # ---- SARIF Report (luôn chạy kể cả khi gate fail) ----
       # SARIF = Static Analysis Results Interchange Format
       # GitHub Security tab đọc được format này → hiện findings trong UI
-      # Day 20: sẽ dùng report này để triage false positive bằng LLM
-      - name: "Semgrep SARIF report"
+      # Bao gồm cả custom rules để findings hiện trong Security tab với đúng rule ID
+      - name: "Semgrep SARIF report (auto + custom rules)"
         if: always()
         env:
           SEMGREP_SEND_METRICS: "on"
         run: |
+          CUSTOM_CONFIG=""
+          if [ -f "rules/sqli-custom.yaml" ]; then
+            CUSTOM_CONFIG="--config rules/sqli-custom.yaml"
+          fi
           semgrep --config auto \
+                  $CUSTOM_CONFIG \
                   --sarif \
+                  --exclude-dir rules/tests \
                   -o semgrep-results.sarif \
                   . 2>/dev/null || true
 
@@ -72,16 +106,40 @@ jobs:
           sarif_file: semgrep-results.sarif
           category: semgrep-sast
 
-      # ---- JSON artifact (audit trail 30 ngày) ----
-      - name: "Semgrep JSON report"
+      # ---- JSON artifact (audit trail 30 ngày + input cho triage script) ----
+      - name: "Semgrep JSON report (auto + custom rules)"
         if: always()
         env:
           SEMGREP_SEND_METRICS: "on"
         run: |
+          CUSTOM_CONFIG=""
+          if [ -f "rules/sqli-custom.yaml" ]; then
+            CUSTOM_CONFIG="--config rules/sqli-custom.yaml"
+          fi
           semgrep --config auto \
+                  $CUSTOM_CONFIG \
                   --json \
+                  --exclude-dir rules/tests \
                   -o semgrep-report.json \
                   . 2>/dev/null || true
+
+      # ---- LLM False Positive Triage (Day 20, tùy chọn) ----
+      # Chỉ chạy khi run_triage=true VÀ có ANTHROPIC_API_KEY
+      # Output: triage-report.md upload lên artifact
+      # --dry-run nếu không có API key để không fail pipeline
+      - name: "LLM False Positive Triage"
+        if: always() && inputs.run_triage
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          pip install anthropic --quiet
+          if [ -f "semgrep-report.json" ]; then
+            python scripts/triage_fp.py semgrep-report.json \
+              --out triage-report.md \
+              --model claude-haiku-4-5-20251001 || true
+          else
+            echo "semgrep-report.json not found, skipping triage"
+          fi
 
       - name: Upload Semgrep reports
         if: always()
@@ -91,4 +149,5 @@ jobs:
           path: |
             semgrep-results.sarif
             semgrep-report.json
+            triage-report.md
           retention-days: 30

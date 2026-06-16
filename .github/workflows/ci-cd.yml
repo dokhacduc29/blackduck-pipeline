@@ -82,6 +82,8 @@ jobs:
     with:
       severity_gate: "ERROR"
       config: "auto"
+      run_triage: false   # bật true + thêm ANTHROPIC_API_KEY secret để dùng LLM triage
+    secrets: inherit      # pass ANTHROPIC_API_KEY khi run_triage: true
 
   # ===========================================================================
   # STAGE 1: BUILD — chỉ chạy khi CẢ HAI Stage 0 pass
