@@ -26,5 +26,5 @@ repos:
           - '--config=rules/sqli-custom.yaml'
           - '--severity=ERROR'
           - '--error'
-          - '--exclude-dir=rules/tests'
+          - '--exclude=rules/tests'
         pass_filenames: false
