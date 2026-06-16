@@ -4,9 +4,9 @@ Semgrep Test Target: SQL Injection Patterns
 Day 20 — Custom Rule Validation
 
 Quy ước Semgrep test annotations:
-  # ruleid: <rule-id>   → dòng TIẾP THEO phải bị flag (TRUE POSITIVE expected)
-  # ok: <rule-id>       → dòng TIẾP THEO KHÔNG được flag (safe code)
-  # todoruleid: <id>    → sẽ bị flag trong tương lai (rule chưa cover)
+  ruleid:<rule-id>   → dòng TIẾP THEO phải bị flag (TRUE POSITIVE expected)
+  ok:<rule-id>       → dòng TIẾP THEO KHÔNG được flag (safe code)
+  todoruleid:<id>    → sẽ bị flag trong tương lai (rule chưa cover)
 
 Chạy validation: semgrep --test rules/
 Chạy scan thực:  semgrep --config rules/sqli-custom.yaml rules/tests/
@@ -107,12 +107,12 @@ def get_config_value(conn: sqlite3.Connection):
 
 
 def count_rows_safe(conn: sqlite3.Connection):
-    """Integer tính toán nội bộ — không có user-controlled input."""
+    """Parameterized với integer literal — rule không flag vì không dùng f-string."""
     cursor = conn.cursor()
-    limit = 100  # hardcoded integer, không phải user input
 
     # ok: python-sqli-fstring
-    cursor.execute(f"SELECT * FROM logs LIMIT {limit}")
+    # ok: python-sqli-string-concat
+    cursor.execute("SELECT * FROM logs LIMIT ?", (100,))
     return cursor.fetchall()
 
 
