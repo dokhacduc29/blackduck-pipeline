@@ -78,9 +78,9 @@ jobs:
         id: vars
         run: |
           echo "target_repo=dokhacduc29/Project_AI_trend_agent" >> "$GITHUB_OUTPUT"
-          # Pin cứng commit SHA của target (main HEAD @ 2026-07-07) → scan/build
+          # Pin cứng commit SHA của target (main HEAD @ 2026-07-08) → scan/build
           # reproducible, không trôi khi app repo commit tiếp.
-          echo "target_ref=95537f42bd4e387a64036270e4ed9bb666511107" >> "$GITHUB_OUTPUT"
+          echo "target_ref=f61297988792adaeb16d818c2d5fb0daef0a4dc9" >> "$GITHUB_OUTPUT"
 
   # ===========================================================================
   # STAGE 0a: SECRETS SCAN (Gitleaks) — chạy TRƯỚC BUILD
@@ -109,7 +109,10 @@ jobs:
       run_triage: false   # bật true + thêm ANTHROPIC_API_KEY secret để dùng LLM triage
       target_repo: ${{ needs.config.outputs.target_repo }}
       target_ref: ${{ needs.config.outputs.target_ref }}
-    secrets: inherit      # pass ANTHROPIC_API_KEY khi run_triage: true
+    # Least privilege: pass ĐÚNG 1 secret _sast cần, không `inherit` toàn bộ secrets.
+    # Nếu action Semgrep bị compromise, nó không thấy DISCORD/SUPABASE/REDDIT keys.
+    secrets:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 
   # ===========================================================================
   # STAGE 1: BUILD — chỉ chạy khi CẢ HAI Stage 0 pass

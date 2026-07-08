@@ -49,6 +49,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 20   # build+push ~8 phút; quá 20 = treo → tự giết, không đốt quota
     outputs:
       image_tag: ${{ steps.meta.outputs.version }}
       image_digest: ${{ steps.build-push.outputs.digest }}
@@ -56,12 +57,12 @@ jobs:
     steps:
       # Checkout repo pipeline (Dockerfile hardening + build config nằm ở đây)
       - name: Checkout pipeline (Dockerfile)
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
 
       # Checkout SOURCE của target app tại pin → build từ đây, không dùng bản
       # vendored. Tách concern: pipeline giữ Dockerfile, target giữ code.
       - name: Checkout target app source
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
         with:
           repository: ${{ inputs.target_repo }}
           ref: ${{ inputs.target_ref }}
@@ -69,11 +70,11 @@ jobs:
 
       # Buildx: multi-platform support + advanced caching
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@c47758b77c9736f4b2ef4073d4d51994fabfe349  # v3.7.1
 
       # Login dùng GITHUB_TOKEN — tự động rotate mỗi job, không cần PAT
       - name: Login to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567  # v3.3.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -84,7 +85,7 @@ jobs:
       # latest: chỉ trên default branch (main)
       - name: Extract metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@369eb591f429131d6889c46b94e711f089e6ca96  # v5.6.1
         with:
           images: ${{ inputs.image_name }}
           tags: |
@@ -96,7 +97,7 @@ jobs:
       # mode=max: cache mọi layer, không chỉ final stage
       - name: Build and push
         id: build-push
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@48aba3b46d1b1fec4febb7c5d0c644b249a11355  # v6.10.0
         with:
           context: ${{ inputs.context }}
           file: ${{ inputs.dockerfile }}

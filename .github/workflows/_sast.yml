@@ -34,6 +34,12 @@ on:
         required: false
         type: string
         default: ""
+    # Khai báo secret explicit → caller KHÔNG cần `secrets: inherit` (least privilege).
+    # Chỉ đúng 1 secret _sast thực sự cần, không nhận toàn bộ secrets của repo.
+    secrets:
+      ANTHROPIC_API_KEY:
+        description: "API key cho LLM false-positive triage (chỉ khi run_triage=true)"
+        required: false
 
 permissions:
   contents: read
@@ -42,17 +48,18 @@ permissions:
 jobs:
   sast:
     runs-on: ubuntu-latest
+    timeout-minutes: 15   # Semgrep full ruleset ~5-8 phút
 
     steps:
       # Checkout repo pipeline (rules/ custom + sample tests nằm ở đây)
       - name: Checkout pipeline (rules)
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
 
       # Checkout SOURCE của target app tại pin → SAST scan code sẽ ship (Day 6b)
       # Chỉ checkout khi caller truyền target_repo (optional để _sast tái dùng độc lập)
       - name: Checkout target app source
         if: inputs.target_repo != ''
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
         with:
           repository: ${{ inputs.target_repo }}
           ref: ${{ inputs.target_ref }}
@@ -128,7 +135,7 @@ jobs:
       - name: Upload SARIF to GitHub Security tab
         if: always()
         continue-on-error: true
-        uses: github/codeql-action/upload-sarif@v4
+        uses: github/codeql-action/upload-sarif@8533807ff379ac610d2b2c389c47e7c629d31d13  # v4.36.3
         with:
           sarif_file: semgrep-results.sarif
           category: semgrep-sast
@@ -171,7 +178,7 @@ jobs:
 
       - name: Upload Semgrep reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: semgrep-reports
           path: |
