@@ -24,6 +24,16 @@ on:
         required: false
         type: boolean
         default: false
+      target_repo:
+        description: "Repo app cần scan (owner/name) — checkout vào ./target"
+        required: false
+        type: string
+        default: ""
+      target_ref:
+        description: "Pin ref (commit SHA) của target"
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -34,7 +44,19 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      # Checkout repo pipeline (rules/ custom + sample tests nằm ở đây)
+      - name: Checkout pipeline (rules)
+        uses: actions/checkout@v4
+
+      # Checkout SOURCE của target app tại pin → SAST scan code sẽ ship (Day 6b)
+      # Chỉ checkout khi caller truyền target_repo (optional để _sast tái dùng độc lập)
+      - name: Checkout target app source
+        if: inputs.target_repo != ''
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.target_repo }}
+          ref: ${{ inputs.target_ref }}
+          path: target
 
       - name: Install Semgrep
         run: pip install semgrep
@@ -50,10 +72,13 @@ jobs:
           SEVERITY: ${{ inputs.severity_gate }}
           SEMGREP_SEND_METRICS: "on"
         run: |
+          # Scan cả repo pipeline VÀ target app (checkout tại ./target).
+          # Exclude: rules/tests (sample TP có chủ đích) + _archive (bản vendored stale)
           semgrep --config "$CONFIG" \
                   --severity "$SEVERITY" \
                   --error \
                   --exclude "rules/tests" \
+                  --exclude "_archive" \
                   .
 
       # ---- Custom Rules Gate (Day 20) ----
@@ -70,6 +95,7 @@ jobs:
                     --severity ERROR \
                     --error \
                     --exclude "rules/tests" \
+                    --exclude "_archive" \
                     . || {
               echo "::error::Custom SQL injection rule triggered — xem findings bên dưới"
               exit 1
@@ -95,6 +121,7 @@ jobs:
                   $CUSTOM_CONFIG \
                   --sarif \
                   --exclude "rules/tests" \
+                  --exclude "_archive" \
                   -o semgrep-results.sarif \
                   . 2>/dev/null || true
 
@@ -120,6 +147,7 @@ jobs:
                   $CUSTOM_CONFIG \
                   --json \
                   --exclude "rules/tests" \
+                  --exclude "_archive" \
                   -o semgrep-report.json \
                   . 2>/dev/null || true
 

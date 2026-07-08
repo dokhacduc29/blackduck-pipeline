@@ -9,7 +9,10 @@ services:
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - SUPABASE_URL=${SUPABASE_URL:-}
       - SUPABASE_KEY=${SUPABASE_KEY:-}
-      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      # Phase 6: Discord là publisher hiện hành (thay Telegram legacy)
+      - DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK_URL:-}
+      - REDDIT_CLIENT_ID=${REDDIT_CLIENT_ID:-}
+      - REDDIT_CLIENT_SECRET=${REDDIT_CLIENT_SECRET:-}
       - TOPIC=${TOPIC:-Artificial Intelligence}
     volumes:
       - agent-data:/app/data

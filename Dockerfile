@@ -15,12 +15,13 @@ COPY Backend/requirements.txt .
 # Chỉ cài production deps (bỏ pytest, streamlit, pandas — không cần trong prod)
 # --no-cache-dir: không lưu pip cache vào image → giảm ~50MB
 # --prefix=/install: cài vào thư mục riêng để COPY sạch sang stage 2
+# Phase 6: Discord publisher dùng httpx webhook → KHÔNG cần python-telegram-bot.
+# Reddit scraper cũng chỉ dùng httpx (OAuth) → không thêm lib.
 RUN pip install --no-cache-dir --prefix=/install \
     httpx==0.28.1 \
     python-dotenv==1.2.2 \
     google-genai \
-    supabase==2.11.0 \
-    python-telegram-bot==21.9
+    supabase==2.11.0
 
 # ── STAGE 2: Runtime — chỉ chứa những gì cần chạy ──
 FROM python:3.13-slim AS runtime

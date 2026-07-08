@@ -1,6 +1,13 @@
+# =============================================================================
+# LƯU Ý: build context giờ là ./target (source app checkout tại pin), KHÔNG phải
+# repo pipeline này. Docker build đọc target/.dockerignore, không đọc file này.
+# File này chỉ còn tác dụng nếu ai đó build thủ công với context = repo pipeline.
+# =============================================================================
+
 # Git & IDE
 .git
 .gitignore
+_archive/
 .vscode
 .claude
 *.md

@@ -63,36 +63,66 @@ concurrency:
 jobs:
 
   # ===========================================================================
+  # STAGE 0: CONFIG — single source of truth cho target repo + pin ref
+  # `env` context KHÔNG dùng được trong `with:` của reusable workflow, nên pin
+  # được publish qua job output rồi các stage sau đọc `needs.config.outputs.*`.
+  # Bump pin = sửa DUY NHẤT ở đây (xem docs/ADR-002).
+  # ===========================================================================
+  config:
+    runs-on: ubuntu-latest
+    outputs:
+      target_repo: ${{ steps.vars.outputs.target_repo }}
+      target_ref: ${{ steps.vars.outputs.target_ref }}
+    steps:
+      - name: Resolve target repo + pin ref
+        id: vars
+        run: |
+          echo "target_repo=dokhacduc29/Project_AI_trend_agent" >> "$GITHUB_OUTPUT"
+          # Pin cứng commit SHA của target (main HEAD @ 2026-07-07) → scan/build
+          # reproducible, không trôi khi app repo commit tiếp.
+          echo "target_ref=95537f42bd4e387a64036270e4ed9bb666511107" >> "$GITHUB_OUTPUT"
+
+  # ===========================================================================
   # STAGE 0a: SECRETS SCAN (Gitleaks) — chạy TRƯỚC BUILD
   # Fail-fast: nếu lộ secret → block toàn bộ pipeline ngay lập tức
-  # Không cần image → chạy độc lập, không depends vào ai
+  # Scan cả pipeline repo (self) VÀ target app repo tại pin (Day 6b)
   # ===========================================================================
   secrets-scan:
+    needs: config
     uses: ./.github/workflows/_gitleaks.yml
     with:
       fail_on_leak: true
+      target_repo: ${{ needs.config.outputs.target_repo }}
+      target_ref: ${{ needs.config.outputs.target_ref }}
 
   # ===========================================================================
   # STAGE 0b: SAST (Semgrep) — chạy SONG SONG với Gitleaks
   # Scan source code tìm vulnerability TRƯỚC khi build image
-  # Shift-left: bắt lỗi sớm nhất có thể trong pipeline
+  # Scan cả pipeline repo VÀ target app repo tại pin (Day 6b)
   # ===========================================================================
   sast:
+    needs: config
     uses: ./.github/workflows/_sast.yml
     with:
       severity_gate: "ERROR"
       config: "auto"
       run_triage: false   # bật true + thêm ANTHROPIC_API_KEY secret để dùng LLM triage
+      target_repo: ${{ needs.config.outputs.target_repo }}
+      target_ref: ${{ needs.config.outputs.target_ref }}
     secrets: inherit      # pass ANTHROPIC_API_KEY khi run_triage: true
 
   # ===========================================================================
   # STAGE 1: BUILD — chỉ chạy khi CẢ HAI Stage 0 pass
   # ===========================================================================
   build:
-    needs: [secrets-scan, sast]
+    needs: [config, secrets-scan, sast]
     uses: ./.github/workflows/_build.yml
     with:
       image_name: ghcr.io/${{ github.repository_owner }}/ai-trend-agent
+      # Build từ SOURCE của target app (checkout tại pin), KHÔNG dùng bản
+      # vendored đã archive. Dockerfile hardening ở lại repo pipeline này.
+      target_repo: ${{ needs.config.outputs.target_repo }}
+      target_ref: ${{ needs.config.outputs.target_ref }}
     # permissions: reusable workflow inherits từ top-level caller
     # Không thể set per-job permissions khi dùng `uses:`
 
@@ -101,11 +131,13 @@ jobs:
   # needs: build → đợi image sẵn sàng
   # ===========================================================================
   test:
-    needs: build
+    needs: [config, build]
     uses: ./.github/workflows/_test.yml
     with:
       image_name: ghcr.io/${{ github.repository_owner }}/ai-trend-agent
       image_tag: ${{ needs.build.outputs.image_tag }}
+      target_repo: ${{ needs.config.outputs.target_repo }}
+      target_ref: ${{ needs.config.outputs.target_ref }}
 
   # ===========================================================================
   # STAGE 3: SCAN — chạy SONG SONG với TEST
@@ -141,7 +173,10 @@ jobs:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      # Phase 6: Discord là publisher hiện hành (thay Telegram legacy)
+      DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+      REDDIT_CLIENT_ID: ${{ secrets.REDDIT_CLIENT_ID }}
+      REDDIT_CLIENT_SECRET: ${{ secrets.REDDIT_CLIENT_SECRET }}
 
   # ===========================================================================
   # STAGE 4b: DEPLOY → STAGING
@@ -165,7 +200,10 @@ jobs:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      # Phase 6: Discord là publisher hiện hành (thay Telegram legacy)
+      DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+      REDDIT_CLIENT_ID: ${{ secrets.REDDIT_CLIENT_ID }}
+      REDDIT_CLIENT_SECRET: ${{ secrets.REDDIT_CLIENT_SECRET }}
 
   # ===========================================================================
   # STAGE 4c: DEPLOY → PRODUCTION
@@ -193,4 +231,7 @@ jobs:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      # Phase 6: Discord là publisher hiện hành (thay Telegram legacy)
+      DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+      REDDIT_CLIENT_ID: ${{ secrets.REDDIT_CLIENT_ID }}
+      REDDIT_CLIENT_SECRET: ${{ secrets.REDDIT_CLIENT_SECRET }}
