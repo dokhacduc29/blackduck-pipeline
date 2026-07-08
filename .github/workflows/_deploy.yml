@@ -38,7 +38,12 @@ on:
         required: false
       SUPABASE_KEY:
         required: false
-      TELEGRAM_BOT_TOKEN:
+      # Phase 6: Discord là publisher hiện hành (thay Telegram legacy)
+      DISCORD_WEBHOOK_URL:
+        required: false
+      REDDIT_CLIENT_ID:
+        required: false
+      REDDIT_CLIENT_SECRET:
         required: false
 
 permissions:
@@ -88,7 +93,9 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          REDDIT_CLIENT_ID: ${{ secrets.REDDIT_CLIENT_ID }}
+          REDDIT_CLIENT_SECRET: ${{ secrets.REDDIT_CLIENT_SECRET }}
         run: |
           echo "=== Deploying to $ENVIRONMENT ==="
           echo "Image: $IMAGE_NAME:$IMAGE_TAG"
