@@ -47,6 +47,7 @@ jobs:
   gitleaks:
     name: "Secret Scan (Gitleaks)"
     runs-on: ubuntu-latest
+    timeout-minutes: 10   # scan history 2 repo ~2-3 phút
 
     outputs:
       leak_found: ${{ steps.set-output.outputs.leak_found }}
@@ -55,7 +56,7 @@ jobs:
       # fetch-depth: 0 → lấy toàn bộ git history
       # Nếu chỉ checkout shallow (depth=1), Gitleaks chỉ thấy commit mới nhất
       - name: Checkout (full history)
-        uses: actions/checkout@v4.2.2
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
         with:
           fetch-depth: 0
 
@@ -63,7 +64,7 @@ jobs:
       # fetch-depth 0: cần full history để bắt secret đã commit rồi xóa
       - name: Checkout target app (full history)
         if: inputs.target_repo != ''
-        uses: actions/checkout@v4.2.2
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
         with:
           repository: ${{ inputs.target_repo }}
           ref: ${{ inputs.target_ref }}
@@ -167,7 +168,7 @@ jobs:
       - name: Upload SARIF (git history scan)
         if: always()
         continue-on-error: true
-        uses: github/codeql-action/upload-sarif@v4
+        uses: github/codeql-action/upload-sarif@8533807ff379ac610d2b2c389c47e7c629d31d13  # v4.36.3
         with:
           sarif_file: gitleaks-git.sarif
           category: gitleaks-git
@@ -175,7 +176,7 @@ jobs:
       - name: Upload SARIF (working tree scan)
         if: always()
         continue-on-error: true
-        uses: github/codeql-action/upload-sarif@v4
+        uses: github/codeql-action/upload-sarif@8533807ff379ac610d2b2c389c47e7c629d31d13  # v4.36.3
         with:
           sarif_file: gitleaks-detect.sarif
           category: gitleaks-detect
@@ -183,7 +184,7 @@ jobs:
       - name: Upload SARIF (target app scan)
         if: always() && inputs.target_repo != ''
         continue-on-error: true
-        uses: github/codeql-action/upload-sarif@v4
+        uses: github/codeql-action/upload-sarif@8533807ff379ac610d2b2c389c47e7c629d31d13  # v4.36.3
         with:
           sarif_file: gitleaks-target-git.sarif
           category: gitleaks-target
@@ -191,7 +192,7 @@ jobs:
       # ---- Archive Reports ----
       - name: Upload scan artifacts
         if: always()
-        uses: actions/upload-artifact@v4.6.2
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: gitleaks-reports
           path: |

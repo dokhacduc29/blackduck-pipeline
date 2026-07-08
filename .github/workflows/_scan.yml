@@ -35,10 +35,11 @@ permissions:
 jobs:
   scan:
     runs-on: ubuntu-latest
+    timeout-minutes: 20   # Trivy DB download + 3 lần scan image; timeout step riêng là 15m
 
     steps:
       - name: Login to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567  # v3.3.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -50,7 +51,7 @@ jobs:
       # Trade-off: strict enough to catch real risks, lenient enough to not
       #   block on upstream issues we can't fix (VD: perl-base in Debian)
       - name: "Trivy: ${{ inputs.severity_gate }} CVE gate"
-        uses: aquasecurity/trivy-action@0.35.0
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1  # 0.35.0
         with:
           image-ref: "${{ inputs.image_name }}:${{ inputs.image_tag }}"
           format: "table"
@@ -65,7 +66,7 @@ jobs:
       # GitHub Security tab hiểu format này → hiện CVE trực tiếp trong UI
       - name: "Trivy: SARIF report"
         if: always()
-        uses: aquasecurity/trivy-action@0.35.0
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1  # 0.35.0
         with:
           image-ref: "${{ inputs.image_name }}:${{ inputs.image_tag }}"
           format: "sarif"
@@ -78,14 +79,14 @@ jobs:
       - name: Upload SARIF to GitHub Security
         if: always()
         continue-on-error: true
-        uses: github/codeql-action/upload-sarif@v4
+        uses: github/codeql-action/upload-sarif@8533807ff379ac610d2b2c389c47e7c629d31d13  # v4.36.3
         with:
           sarif_file: trivy-results.sarif
 
       # ---- JSON Report (archive) ----
       - name: "Trivy: JSON report"
         if: always()
-        uses: aquasecurity/trivy-action@0.35.0
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1  # 0.35.0
         with:
           image-ref: "${{ inputs.image_name }}:${{ inputs.image_tag }}"
           format: "json"
@@ -96,7 +97,7 @@ jobs:
       # Upload artifacts — giữ 30 ngày cho audit trail
       - name: Upload scan reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: trivy-reports
           path: |
