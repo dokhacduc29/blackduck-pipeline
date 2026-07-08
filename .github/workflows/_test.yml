@@ -16,6 +16,14 @@ on:
         description: "Image tag to pull for smoke test"
         required: true
         type: string
+      target_repo:
+        description: "Repo app cần test (owner/name) — checkout vào ./target"
+        required: true
+        type: string
+      target_ref:
+        description: "Pin ref (commit SHA) của target"
+        required: true
+        type: string
       python_version:
         description: "Python version for unit tests"
         required: false
@@ -31,7 +39,17 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      # Checkout repo pipeline (smoke-test.sh nằm ở tests/ của repo này)
+      - name: Checkout pipeline (smoke tests)
+        uses: actions/checkout@v4
+
+      # Checkout SOURCE của target app tại pin → unit test chạy trên code thật
+      - name: Checkout target app source
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.target_repo }}
+          ref: ${{ inputs.target_ref }}
+          path: target
 
       # ---- Unit Tests ----
       - uses: actions/setup-python@v5
@@ -39,22 +57,22 @@ jobs:
           python-version: ${{ inputs.python_version }}
 
       # pip cache: tránh download lại packages mỗi run
-      # hashFiles: cache invalidate khi requirements.txt thay đổi
+      # hashFiles: cache invalidate khi requirements.txt của target thay đổi
       - name: Cache pip packages
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
-          key: pip-${{ runner.os }}-${{ hashFiles('Backend/requirements.txt') }}
+          key: pip-${{ runner.os }}-${{ hashFiles('target/Backend/requirements.txt') }}
           restore-keys: pip-${{ runner.os }}-
 
       - name: Install test dependencies
         run: |
-          pip install -r Backend/requirements.txt
+          pip install -r target/Backend/requirements.txt
           pip install pytest pytest-asyncio
 
       - name: Run unit tests
         run: |
-          cd Backend
+          cd target/Backend
           python -m pytest ai_trend_agent.Tests/test_agents.py -v \
             --tb=short \
             --no-header

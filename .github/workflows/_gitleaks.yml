@@ -24,6 +24,16 @@ on:
         required: false
         type: boolean
         default: true
+      target_repo:
+        description: "Repo app cần scan secret (owner/name) — checkout vào ./target"
+        required: false
+        type: string
+        default: ""
+      target_ref:
+        description: "Pin ref (commit SHA) của target"
+        required: false
+        type: string
+        default: ""
     outputs:
       leak_found:
         description: "true nếu phát hiện ít nhất 1 secret"
@@ -47,6 +57,17 @@ jobs:
       - name: Checkout (full history)
         uses: actions/checkout@v4.2.2
         with:
+          fetch-depth: 0
+
+      # Checkout target app (full history) → scan secret trên code sẽ ship (Day 6b)
+      # fetch-depth 0: cần full history để bắt secret đã commit rồi xóa
+      - name: Checkout target app (full history)
+        if: inputs.target_repo != ''
+        uses: actions/checkout@v4.2.2
+        with:
+          repository: ${{ inputs.target_repo }}
+          ref: ${{ inputs.target_ref }}
+          path: target
           fetch-depth: 0
 
       # Cài Gitleaks binary trực tiếp — không dùng action wrapper
@@ -99,6 +120,33 @@ jobs:
           && echo "detect_status=clean" >> "$GITHUB_OUTPUT" \
           || echo "detect_status=leaked" >> "$GITHUB_OUTPUT"
 
+      # ---- SCAN 3: Target app repo (git history + working tree) — Day 6b ----
+      # Chỉ chạy khi caller truyền target_repo. Scan cả history để bắt secret đã
+      # commit vào target rồi xóa. exit-code không fail step ở đây (set +e) — kết
+      # quả gộp vào set-output để fail-fast một chỗ.
+      - name: "Gitleaks: Scan target app"
+        id: scan-target
+        if: always() && inputs.target_repo != ''
+        run: |
+          set +e
+          gitleaks git ./target \
+            --config "${{ inputs.config_path }}" \
+            --report-format sarif \
+            --report-path gitleaks-target-git.sarif \
+            --exit-code 1 --verbose
+          TARGET_GIT=$?
+          gitleaks detect ./target \
+            --config "${{ inputs.config_path }}" \
+            --report-format sarif \
+            --report-path gitleaks-target-detect.sarif \
+            --exit-code 1 --verbose
+          TARGET_DETECT=$?
+          if [ $TARGET_GIT -eq 1 ] || [ $TARGET_DETECT -eq 1 ]; then
+            echo "target_status=leaked" >> "$GITHUB_OUTPUT"
+          else
+            echo "target_status=clean" >> "$GITHUB_OUTPUT"
+          fi
+
       # Tổng hợp kết quả — set output cho caller workflow
       - name: Set output
         id: set-output
@@ -106,8 +154,9 @@ jobs:
         run: |
           GIT_STATUS="${{ steps.scan-git.outputs.git_status }}"
           DETECT_STATUS="${{ steps.scan-detect.outputs.detect_status }}"
-          echo "git_status=$GIT_STATUS | detect_status=$DETECT_STATUS"
-          if [[ "$GIT_STATUS" == "leaked" || "$DETECT_STATUS" == "leaked" ]]; then
+          TARGET_STATUS="${{ steps.scan-target.outputs.target_status }}"
+          echo "git_status=$GIT_STATUS | detect_status=$DETECT_STATUS | target_status=$TARGET_STATUS"
+          if [[ "$GIT_STATUS" == "leaked" || "$DETECT_STATUS" == "leaked" || "$TARGET_STATUS" == "leaked" ]]; then
             echo "leak_found=true" >> "$GITHUB_OUTPUT"
           else
             echo "leak_found=false" >> "$GITHUB_OUTPUT"
@@ -131,6 +180,14 @@ jobs:
           sarif_file: gitleaks-detect.sarif
           category: gitleaks-detect
 
+      - name: Upload SARIF (target app scan)
+        if: always() && inputs.target_repo != ''
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: gitleaks-target-git.sarif
+          category: gitleaks-target
+
       # ---- Archive Reports ----
       - name: Upload scan artifacts
         if: always()
@@ -140,7 +197,10 @@ jobs:
           path: |
             gitleaks-git.sarif
             gitleaks-detect.sarif
+            gitleaks-target-git.sarif
+            gitleaks-target-detect.sarif
           retention-days: 30
+          if-no-files-found: ignore
 
       # ---- Hard Fail nếu có secret ----
       # Tách bước fail ra cuối để đảm bảo report đã được upload trước

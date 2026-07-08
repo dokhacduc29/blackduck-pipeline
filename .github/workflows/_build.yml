@@ -14,16 +14,24 @@ on:
         description: "Full image name (VD: ghcr.io/user/app)"
         required: true
         type: string
+      target_repo:
+        description: "Repo app cần build (owner/name) — checkout vào ./target"
+        required: true
+        type: string
+      target_ref:
+        description: "Pin ref (commit SHA) của target — reproducible build"
+        required: true
+        type: string
       dockerfile:
-        description: "Path tới Dockerfile"
+        description: "Path tới Dockerfile (nằm trong repo pipeline, chứa hardening)"
         required: false
         type: string
         default: "./Dockerfile"
       context:
-        description: "Docker build context"
+        description: "Docker build context — mặc định source target đã checkout"
         required: false
         type: string
-        default: "."
+        default: "./target"
 
     # ---- OUTPUTS: trả về cho caller ----
     outputs:
@@ -46,7 +54,18 @@ jobs:
       image_digest: ${{ steps.build-push.outputs.digest }}
 
     steps:
-      - uses: actions/checkout@v4
+      # Checkout repo pipeline (Dockerfile hardening + build config nằm ở đây)
+      - name: Checkout pipeline (Dockerfile)
+        uses: actions/checkout@v4
+
+      # Checkout SOURCE của target app tại pin → build từ đây, không dùng bản
+      # vendored. Tách concern: pipeline giữ Dockerfile, target giữ code.
+      - name: Checkout target app source
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.target_repo }}
+          ref: ${{ inputs.target_ref }}
+          path: target
 
       # Buildx: multi-platform support + advanced caching
       - name: Set up Docker Buildx
