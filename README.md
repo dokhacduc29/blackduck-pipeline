@@ -52,7 +52,7 @@ Pin nằm **một chỗ duy nhất** — job `config` trong
 [`.github/workflows/ci-cd.yml`](.github/workflows/ci-cd.yml):
 
 ```yaml
-target_ref=95537f42bd4e387a64036270e4ed9bb666511107   # sửa dòng này
+target_ref=f61297988792adaeb16d818c2d5fb0daef0a4dc9   # sửa dòng này
 ```
 
 Lấy SHA mới nhất của target:

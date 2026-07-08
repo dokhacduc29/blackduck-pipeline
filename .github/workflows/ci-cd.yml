@@ -78,9 +78,9 @@ jobs:
         id: vars
         run: |
           echo "target_repo=dokhacduc29/Project_AI_trend_agent" >> "$GITHUB_OUTPUT"
-          # Pin cứng commit SHA của target (main HEAD @ 2026-07-07) → scan/build
+          # Pin cứng commit SHA của target (main HEAD @ 2026-07-08) → scan/build
           # reproducible, không trôi khi app repo commit tiếp.
-          echo "target_ref=95537f42bd4e387a64036270e4ed9bb666511107" >> "$GITHUB_OUTPUT"
+          echo "target_ref=f61297988792adaeb16d818c2d5fb0daef0a4dc9" >> "$GITHUB_OUTPUT"
 
   # ===========================================================================
   # STAGE 0a: SECRETS SCAN (Gitleaks) — chạy TRƯỚC BUILD
